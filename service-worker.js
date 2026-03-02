@@ -1,19 +1,19 @@
-const CACHE_NAME = "hrn-cache-v1.0.9";
+const CACHE_NAME = "hrn-cache-v1.0.9011";
 
 const BASE_PATH = ""; // root van username.github.io
 
 const FILES_TO_CACHE = [
   "/",
-  "/index.html?v=6",
-  "/assets/logic.js?v=6",
-  "/assets/branding/logo.png?v=6",
+  "/index.html?v=90",
+  "/assets/logic.js?v=90",
+  "/assets/branding/logo.png?v=90",
   // Icons
-  "/assets/branding/app/icon-192x192-maskable.png?v=6",
-  "/assets/branding/app/icon-192x192-not-maskable.png?v=6",
-  "/assets/branding/app/icon-256x256-maskable.png?v=6",
-  "/assets/branding/app/icon-256x256-not-maskable.png?v=6",
-  "/assets/branding/app/icon-512x512-maskable.png?v=6",
-  "/assets/branding/app/icon-512x512-not-maskable.png?v=6"
+  "/assets/branding/app/icon-192x192-maskable.png?v=90",
+  "/assets/branding/app/icon-192x192-not-maskable.png?v=90",
+  "/assets/branding/app/icon-256x256-maskable.png?v=90",
+  "/assets/branding/app/icon-256x256-not-maskable.png?v=90",
+  "/assets/branding/app/icon-512x512-maskable.png?v=90",
+  "/assets/branding/app/icon-512x512-not-maskable.png?v=90"
 ];
 
 // Install
@@ -41,7 +41,7 @@ self.addEventListener("fetch", (event) => {
   // Navigatie → fallback index.html
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request).catch(() => caches.match("/index.html?v=6"))
+      fetch(request).catch(() => caches.match("/index.html?v=90"))
     );
     return;
   }
@@ -62,7 +62,7 @@ self.addEventListener("fetch", (event) => {
         .catch(() => {
           // fallback image voor offline icons/logo
           if (request.destination === "image") {
-            return caches.match("/assets/branding/logo.png?v=6");
+            return caches.match("/assets/branding/logo.png?v=90");
           }
         });
     })
