@@ -1,7 +1,7 @@
 /* 
  *  © 2026 
  *  GitHub: https://github.com/HyperRushNet/chat-app
- *  Version: 1.1.0
+ *  Version: 1.0.5
  *  assets/logic.js 
  *  MIT License
  */
@@ -26,7 +26,7 @@ export function initHRNchat(customConfig = {}) {
 
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
     const DB_NAME = 'HRN_LOCAL_DB';
-    const DB_VERSION = 6;
+    const DB_VERSION = 8;
 
     const state = {
         user: null,
@@ -256,27 +256,43 @@ export function initHRNchat(customConfig = {}) {
         const roomCountEl = $('room-user-count');
         const infoRoomEl = $('info-room-count');
         const infoGlobalEl = $('info-global-count');
+        
+        // Default dot color
+        let dotColor = 'var(--text-mute)'; // Default Gray
+        
         if (state.isOfflineMode) {
             if (infoGlobalEl) infoGlobalEl.innerText = "Local";
             if (roomCountEl) roomCountEl.innerText = "-";
             if (infoRoomEl) infoRoomEl.innerText = "-";
-            const dot = roomCountEl?.previousElementSibling;
-            if (dot) dot.style.background = 'var(--text-mute)';
         } else {
             let count = state.lastKnownOnlineCount || 0;
             let displayRoomText = count;
+            
             if (state.currentRoomData?.is_direct) {
-                if (count === 1) displayRoomText = "Offline";
-                else if (count === 2) displayRoomText = "Online";
-                else displayRoomText = "-";
+                if (count === 1) {
+                    displayRoomText = "Offline";
+                    dotColor = 'var(--text-mute)'; // Gray for offline DM
+                } else if (count === 2) {
+                    displayRoomText = "Online";
+                    dotColor = 'var(--success)'; // Green for online DM
+                } else {
+                    displayRoomText = "-";
+                    dotColor = 'var(--text-mute)';
+                }
+            } else {
+                // Group chat
+                dotColor = 'var(--success)'; // Green for groups if connected
             }
+
             let displayGlobalCount = `${state.globalOnlineCount}/${CONFIG.maxUsers}`;
             if (infoGlobalEl) infoGlobalEl.innerText = displayGlobalCount;
             if (roomCountEl) roomCountEl.innerText = displayRoomText;
             if (infoRoomEl) infoRoomEl.innerText = displayRoomText;
-            const dot = roomCountEl?.previousElementSibling;
-            if (dot) dot.style.background = 'var(--success)';
         }
+        
+        // Apply dot color
+        const dot = roomCountEl?.previousElementSibling;
+        if (dot) dot.style.background = dotColor;
     };
 
     const schedulePresenceUpdate = () => {
@@ -324,15 +340,11 @@ export function initHRNchat(customConfig = {}) {
     };
 
     const cacheAvatar = async (profile) => {
-        if (!profile) return profile;
-        if (!profile.avatar_url) return profile;
-        
-        // Skip proxy for base64/data URLs
+        if (!profile || !profile.avatar_url) return profile;
         if (profile.avatar_url.startsWith('data:')) {
             profile.cached_avatar = profile.avatar_url;
             return profile;
         }
-
         try {
             const response = await fetch(CONFIG.proxyUrl + profile.avatar_url);
             if (!response.ok) throw new Error("Invalid image response");
@@ -376,18 +388,14 @@ export function initHRNchat(customConfig = {}) {
 
                         if (needsImageCache && serverProfile.avatar_url) {
                             await cacheAvatar(newProfileData);
-                            profile = await localDB.get('profiles', userId);
+                            profile = await localDB.get('profiles', userId); // Fetch again after cache
                         } else {
                             await localDB.put('profiles', newProfileData);
                             profile = newProfileData;
                         }
                     }
-                } else if (error) {
-                    console.warn(`[HRN] Profile fetch error for ${userId}:`, error.message);
                 }
-            } catch (e) {
-                console.error("[HRN] GetProfile exception:", e);
-            }
+            } catch (e) {}
         }
         if (profile) state.profileCache[userId] = profile;
         return profile;
@@ -395,39 +403,23 @@ export function initHRNchat(customConfig = {}) {
 
     const resolveRoomDisplay = async (room) => {
         if (!room) return { name: 'Chat', avatar: null };
-        
-        // Group Chat Logic
         if (!room.is_direct) return { name: room.name, avatar: room.avatar_url };
         
-        // --- ROBUST DIRECT MESSAGE LOGIC ---
         const myId = state.user?.id;
         if (!myId) return { name: 'Direct Message', avatar: null };
         
-        if (!room.allowed_users || room.allowed_users.length === 0) {
-            console.warn("[HRN] DM Resolver: allowed_users is empty for room", room.id);
-            return { name: 'Direct Message', avatar: null };
-        }
+        if (!room.allowed_users || room.allowed_users.length === 0) return { name: 'Direct Message', avatar: null };
         
-        // 1. Filter out myself and any wildcard '*' characters
         const otherIds = room.allowed_users.filter(id => id !== myId && id !== '*');
-        
-        // 2. Pick the first valid "other" ID
         const otherId = otherIds.length > 0 ? otherIds[0] : null;
         
-        if (!otherId) {
-            console.warn("[HRN] DM Resolver: Could not find otherId. MyID:", myId, "List:", room.allowed_users);
-            return { name: 'Direct Message', avatar: null };
-        }
-
-        // 3. Fetch the profile of the other user
+        if (!otherId) return { name: 'Direct Message', avatar: null };
+        
         const profile = await getProfile(otherId);
         
-        if (!profile) {
-            console.warn("[HRN] DM Resolver: Profile not found for ID", otherId);
-            return { name: 'Unknown User', avatar: null };
-        }
-
-        // 4. Return their details
+        // Fallback logic
+        if (!profile) return { name: 'Unknown User', avatar: null };
+        
         return {
             name: profile.full_name || 'User',
             avatar: profile.cached_avatar || profile.avatar_url
@@ -999,8 +991,6 @@ export function initHRNchat(customConfig = {}) {
     };
 
     window.removePickerUser = (id) => { state.selectedAllowedUsers = state.selectedAllowedUsers.filter(u => u.id !== id); renderPickerSelectedUsers(); };
-    
-    // FIX: Save profile to localDB when adding user
     window.addUserById = async () => {
         const input = $('picker-id-input');
         const id = input.value.trim();
@@ -1532,7 +1522,6 @@ export function initHRNchat(customConfig = {}) {
         else { localStorage.setItem('hrn_auth_email', temp.em); localStorage.setItem('hrn_auth_pass', temp.p); window.nav('scr-lobby'); window.loadRooms(); window.setLoading(false); }
     };
 
-    // FIX: Save target user profile to localDB immediately upon creation
     window.handleCreate = async (e) => {
         if (!e || !e.isTrusted) return;
         if (state.processingAction) return;
@@ -1547,7 +1536,7 @@ export function initHRNchat(customConfig = {}) {
             const { data: profile, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', targetUser).single();
             if (error || !profile) { window.toast("User not found."); state.processingAction = false; return; }
             
-            // Cache the target user immediately!
+            // PERFECT CACHE: Save the profile immediately upon finding it
             await localDB.put('profiles', profile);
             state.profileCache[profile.id] = profile;
             
