@@ -1,14 +1,10 @@
 const CACHE_NAME = "hrn-cache-v1.0.6";
 
-// Dynamisch root pad bepalen
 const ORIGIN = self.location.origin;
 const PATHNAME = self.location.pathname;
 
-// Voor GitHub project pages is pathname meestal "/repo/service-worker.js"
-// Dus we halen de mapnaam eruit
 let BASE_PATH = PATHNAME.replace(/\/service-worker\.js$/, "");
 
-// Als het root is, wordt BASE_PATH ""
 if (BASE_PATH === "/") BASE_PATH = "";
 
 const FILES_TO_CACHE = [
@@ -47,7 +43,6 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const request = event.request;
 
-  // Navigatie verzoek (pagina's)
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request).catch(() => {
@@ -57,7 +52,6 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Assets
   event.respondWith(
     caches.match(request).then((cached) => {
       return cached || fetch(request);
