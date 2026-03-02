@@ -1,7 +1,7 @@
 /* 
  *  © 2026 
  *  GitHub: https://github.com/HyperRushNet/chat-app
- *  Version: 1.0.5
+ *  Version: 1.0.7
  *  assets/logic.js 
  *  MIT License
  */
@@ -363,13 +363,13 @@ export function initHRNchat(customConfig = {}) {
     const getProfile = async (userId) => {
         if (!userId) return null;
         
-        // 1. Check memory cache first
+        // 1. Memory Cache
         if (state.profileCache[userId]) return state.profileCache[userId];
         
-        // 2. Check local DB
+        // 2. Local DB (IndexedDB)
         let profile = await localDB.get('profiles', userId);
         
-        // 3. If online, ALWAYS verify with server or fetch if missing
+        // 3. If online, always verify/update from server
         if (!state.isOfflineMode) {
             try {
                 const { data: serverProfile, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', userId).single();
@@ -392,7 +392,7 @@ export function initHRNchat(customConfig = {}) {
 
                         if (needsImageCache && serverProfile.avatar_url) {
                             await cacheAvatar(newProfileData);
-                            profile = await localDB.get('profiles', userId); // Fetch again after cache
+                            profile = await localDB.get('profiles', userId); 
                         } else {
                             await localDB.put('profiles', newProfileData);
                             profile = newProfileData;
@@ -404,10 +404,6 @@ export function initHRNchat(customConfig = {}) {
         
         if (profile) {
             state.profileCache[userId] = profile;
-        } else {
-            // If profile is still null (e.g. user not found in DB), return a default object to prevent "Unknown User" immediately
-            // But usually "Unknown User" is rendered if profile is null.
-            return null;
         }
         
         return profile;
@@ -1013,6 +1009,7 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(false);
         if (error || !data) return window.toast("User not found.");
         
+        // IMPORTANT: Cache profile immediately upon finding
         await localDB.put('profiles', data);
         state.profileCache[data.id] = data;
         
@@ -1547,7 +1544,7 @@ export function initHRNchat(customConfig = {}) {
             const { data: profile, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', targetUser).single();
             if (error || !profile) { window.toast("User not found."); state.processingAction = false; return; }
             
-            // PERFECT CACHE: Save the profile immediately upon finding it
+            // IMPORTANT: Cache profile immediately upon finding
             await localDB.put('profiles', profile);
             state.profileCache[profile.id] = profile;
             
