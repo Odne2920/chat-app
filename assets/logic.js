@@ -1,7 +1,7 @@
 /* 
  *  © 2026 
  *  GitHub: https://github.com/HyperRushNet/chat-app
- *  Version: 1.0.6
+ *  Version: 1.0.7
  *  assets/logic.js 
  *  MIT License
  */
@@ -325,8 +325,10 @@ export function initHRNchat(customConfig = {}) {
 
     const cacheAvatar = async (profile) => {
         if (!profile || !profile.avatar_url) return profile;
-        if (profile.avatar_url.startsWith('data:')) return profile;
-        
+        if (profile.avatar_url.startsWith('data:')) {
+            profile.cached_avatar = profile.avatar_url;
+            return profile;
+        }
         try {
             const response = await fetch(CONFIG.proxyUrl + profile.avatar_url);
             if (!response.ok) throw new Error("Invalid image response");
@@ -378,6 +380,7 @@ export function initHRNchat(customConfig = {}) {
 
     const resolveRoomDisplay = async (room) => {
         if (!room) return { name: 'Chat', avatar: null };
+        
         if (!room.is_direct) return { name: room.name, avatar: room.avatar_url };
         
         const myId = state.user?.id;
