@@ -1,24 +1,23 @@
-const CACHE_NAME = "hrn-cache-v1.0.1001";
-
-const BASE_PATH = "";
-
+const CACHE_NAME = "hrn-cache-v1.0.01002";
 const FILES_TO_CACHE = [
   "/",
-  "/index.html?v=7",
-  "/assets/logic.js?v=7",
-  "/assets/branding/logo.png?v=7",
-  "/assets/branding/app/icon-192x192-maskable.png?v=7",
-  "/assets/branding/app/icon-192x192-not-maskable.png?v=7",
-  "/assets/branding/app/icon-256x256-maskable.png?v=7",
-  "/assets/branding/app/icon-256x256-not-maskable.png?v=7",
-  "/assets/branding/app/icon-512x512-maskable.png?v=7",
-  "/assets/branding/app/icon-512x512-not-maskable.png?v=7"
+  "/index.html?v=8",
+  "/assets/logic.js?v=8",
+  "/assets/branding/logo.png?v=8",
+  "/assets/branding/app/icon-192x192-maskable.png?v=8",
+  "/assets/branding/app/icon-192x192-not-maskable.png?v=8",
+  "/assets/branding/app/icon-256x256-maskable.png?v=8",
+  "/assets/branding/app/icon-256x256-not-maskable.png?v=8",
+  "/assets/branding/app/icon-512x512-maskable.png?v=8",
+  "/assets/branding/app/icon-512x512-not-maskable.png?v=8"
 ];
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(FILES_TO_CACHE))
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.addAll(FILES_TO_CACHE).catch(() => {})
+    )
   );
 });
 
@@ -36,14 +35,12 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request).catch(() => caches.match("/index.html?v=7"))
+      fetch(request).catch(() => caches.match("/index.html?v=8"))
     );
     return;
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      return cached || fetch(request);
-    })
+    caches.match(request).then((cached) => cached || fetch(request))
   );
 });
