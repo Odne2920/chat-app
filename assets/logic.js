@@ -257,8 +257,7 @@ export function initHRNchat(customConfig = {}) {
         const infoRoomEl = $('info-room-count');
         const infoGlobalEl = $('info-global-count');
         
-        // Default dot color
-        let dotColor = 'var(--text-mute)'; // Default Gray
+        let dotColor = 'var(--text-mute)';
         
         if (state.isOfflineMode) {
             if (infoGlobalEl) infoGlobalEl.innerText = "Local";
@@ -271,17 +270,16 @@ export function initHRNchat(customConfig = {}) {
             if (state.currentRoomData?.is_direct) {
                 if (count === 1) {
                     displayRoomText = "Offline";
-                    dotColor = 'var(--text-mute)'; // Gray for offline DM
+                    dotColor = 'var(--text-mute)';
                 } else if (count === 2) {
                     displayRoomText = "Online";
-                    dotColor = 'var(--success)'; // Green for online DM
+                    dotColor = 'var(--success)';
                 } else {
                     displayRoomText = "-";
                     dotColor = 'var(--text-mute)';
                 }
             } else {
-                // Group chat
-                dotColor = 'var(--success)'; // Green for groups if connected
+                dotColor = 'var(--success)';
             }
 
             let displayGlobalCount = `${state.globalOnlineCount}/${CONFIG.maxUsers}`;
@@ -290,7 +288,6 @@ export function initHRNchat(customConfig = {}) {
             if (infoRoomEl) infoRoomEl.innerText = displayRoomText;
         }
         
-        // Apply dot color
         const dot = roomCountEl?.previousElementSibling;
         if (dot) dot.style.background = dotColor;
     };
@@ -365,17 +362,24 @@ export function initHRNchat(customConfig = {}) {
 
     const getProfile = async (userId) => {
         if (!userId) return null;
+        
+        // 1. Check memory cache first
         if (state.profileCache[userId]) return state.profileCache[userId];
         
+        // 2. Check local DB
         let profile = await localDB.get('profiles', userId);
         
+        // 3. If online, ALWAYS verify with server or fetch if missing
         if (!state.isOfflineMode) {
             try {
                 const { data: serverProfile, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', userId).single();
+                
                 if (serverProfile) {
                     const localTime = profile?.updated_at ? new Date(profile.updated_at).getTime() : 0;
                     const serverTime = serverProfile.updated_at ? new Date(serverProfile.updated_at).getTime() : 0;
-                    const needsUpdate = !profile || serverTime > localTime || profile.avatar_url !== serverProfile.avatar_url;
+                    
+                    // Update if server is newer OR if local profile lacks a name (corrupt/old cache)
+                    const needsUpdate = !profile || serverTime > localTime || !profile.full_name;
                     
                     if (needsUpdate) {
                         const newProfileData = { ...serverProfile };
@@ -395,9 +399,17 @@ export function initHRNchat(customConfig = {}) {
                         }
                     }
                 }
-            } catch (e) {}
+            } catch (e) { console.warn("Profile fetch failed, using cache if available", e); }
         }
-        if (profile) state.profileCache[userId] = profile;
+        
+        if (profile) {
+            state.profileCache[userId] = profile;
+        } else {
+            // If profile is still null (e.g. user not found in DB), return a default object to prevent "Unknown User" immediately
+            // But usually "Unknown User" is rendered if profile is null.
+            return null;
+        }
+        
         return profile;
     };
 
@@ -410,6 +422,7 @@ export function initHRNchat(customConfig = {}) {
         
         if (!room.allowed_users || room.allowed_users.length === 0) return { name: 'Direct Message', avatar: null };
         
+        // Find the OTHER user in the allowed_users array
         const otherIds = room.allowed_users.filter(id => id !== myId && id !== '*');
         const otherId = otherIds.length > 0 ? otherIds[0] : null;
         
@@ -417,7 +430,6 @@ export function initHRNchat(customConfig = {}) {
         
         const profile = await getProfile(otherId);
         
-        // Fallback logic
         if (!profile) return { name: 'Unknown User', avatar: null };
         
         return {
@@ -1001,7 +1013,6 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(false);
         if (error || !data) return window.toast("User not found.");
         
-        // Cache immediately
         await localDB.put('profiles', data);
         state.profileCache[data.id] = data;
         
