@@ -457,7 +457,7 @@
       <script type=module>
          import { initHRNchat } from './assets/logic.min.js';
          initHRNchat({ maxUsers: 150, maxMessageLength: 5000, maxMessages: 50, rateLimitMs: 1000, historyLoadLimit: 20 });
-         "serviceWorker"in navigator&&window.addEventListener("load",()=>navigator.serviceWorker.register("./assets/sw.js").catch(()=>{}));      
+         "serviceWorker"in navigator&&window.addEventListener("load",()=>navigator.serviceWorker.register("./service-worker.js").catch(()=>{}));      
       </script>
    </body>
 </html>
