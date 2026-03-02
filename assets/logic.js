@@ -377,10 +377,17 @@ export function initHRNchat(customConfig = {}) {
     const resolveRoomDisplay = async (room) => {
         if (!room) return { name: 'Chat', avatar: null };
         if (!room.is_direct) return { name: room.name, avatar: room.avatar_url };
+        
         const myId = state.user?.id;
-        if (!myId || !room.allowed_users || room.allowed_users.length === 0) return { name: 'Direct Message', avatar: null };
+        if (!myId) return { name: 'Direct Message', avatar: null };
+        
+        if (!room.allowed_users || room.allowed_users.length === 0) {
+            return { name: 'Direct Message', avatar: null };
+        }
+        
         const otherId = room.allowed_users.find(id => id !== myId);
         if (!otherId) return { name: 'Direct Message', avatar: null };
+        
         const profile = await getProfile(otherId);
         return {
             name: profile?.full_name || 'User',
@@ -1282,8 +1289,12 @@ export function initHRNchat(customConfig = {}) {
         const chatContainer = $('chat-messages');
         chatContainer.innerHTML = '';
         chatContainer.onscroll = handleScroll;
+        
         let roomData = cachedData;
-        if (!roomData || !roomData.allowed_users) { roomData = await localDB.get('rooms', id); }
+        if (!roomData || !roomData.allowed_users) { 
+            roomData = await localDB.get('rooms', id); 
+        }
+        
         if (!state.isOfflineMode) {
             try {
                 const { data: netRoom } = await db.from('rooms').select('*').eq('id', id).single();
