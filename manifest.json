@@ -1,14 +1,11 @@
 {
-  "id": "./",
   "name": "HRN Chat",
   "short_name": "HRN Chat",
   "description": "Official HRN Chat app.",
 
   "start_url": "./?source=pwa",
   "scope": "./",
-
   "display": "standalone",
-  "display_override": ["standalone"],
   "orientation": "portrait",
 
   "background_color": "#ffffff",
@@ -34,10 +31,6 @@
       "purpose": "any maskable"
     }
   ],
-
-  "launch_handler": {
-    "client_mode": "focus-existing"
-  },
 
   "prefer_related_applications": false,
 
