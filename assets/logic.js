@@ -26,7 +26,7 @@ export function initHRNchat(customConfig = {}) {
 
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
     const DB_NAME = 'HRN_LOCAL_DB';
-    const DB_VERSION = 6; 
+    const DB_VERSION = 6;
 
     const state = {
         user: null,
@@ -85,7 +85,8 @@ export function initHRNchat(customConfig = {}) {
         authListener: null,
         ui: {
             isOverlayOpen: false,
-            isContextOpen: false
+            isContextOpen: false,
+            overlayCloseLocked: false
         }
     };
 
@@ -371,6 +372,20 @@ export function initHRNchat(customConfig = {}) {
         }
         if (profile) state.profileCache[userId] = profile;
         return profile;
+    };
+
+    const resolveRoomDisplay = async (room) => {
+        if (!room) return { name: 'Chat', avatar: null };
+        if (!room.is_direct) return { name: room.name, avatar: room.avatar_url };
+        const myId = state.user?.id;
+        if (!myId || !room.allowed_users) return { name: 'Direct Message', avatar: null };
+        const otherId = room.allowed_users.find(id => id !== myId);
+        if (!otherId) return { name: 'Direct Message', avatar: null };
+        const profile = await getProfile(otherId);
+        return {
+            name: profile?.full_name || 'User',
+            avatar: profile?.cached_avatar || profile?.avatar_url
+        };
     };
 
     const workerCode = `
@@ -715,6 +730,7 @@ export function initHRNchat(customConfig = {}) {
         if (!msgEl || !state.user) return;
         if (msgEl.classList.contains('msg-deleted')) return;
         e.preventDefault();
+        e.stopPropagation();
         const msgData = { id: msgEl.dataset.id, user_id: msgEl.dataset.uid, created_at: msgEl.dataset.time, text: msgEl.dataset.text };
         const menu = $('context-menu');
         const editBtn = $('ctx-edit');
@@ -750,7 +766,8 @@ export function initHRNchat(customConfig = {}) {
         state.ui.isContextOpen = false;
     };
 
-    $('ctx-edit').onclick = () => {
+    $('ctx-edit').onclick = (e) => {
+        e.stopPropagation();
         if (!state.contextTarget) return;
         state.editingMessage = state.contextTarget;
         $('edit-msg-input').value = state.contextTarget.text;
@@ -758,8 +775,9 @@ export function initHRNchat(customConfig = {}) {
         window.openOverlay();
         hideContextMenu();
     };
-    $('ctx-copy').onclick = () => { if (!state.contextTarget) return; navigator.clipboard.writeText(state.contextTarget.text); window.toast("Copied."); hideContextMenu(); };
-    $('ctx-delete').onclick = async () => {
+    $('ctx-copy').onclick = (e) => { e.stopPropagation(); if (!state.contextTarget) return; navigator.clipboard.writeText(state.contextTarget.text); window.toast("Copied."); hideContextMenu(); };
+    $('ctx-delete').onclick = async (e) => {
+        e.stopPropagation();
         if (!state.contextTarget || !state.user) return;
         const idToDelete = state.contextTarget.id;
         hideContextMenu();
@@ -791,6 +809,15 @@ export function initHRNchat(customConfig = {}) {
         if (state.ui.isContextOpen) {
             const menu = $('context-menu');
             if (menu && !menu.contains(e.target)) hideContextMenu();
+        }
+        if (state.ui.isOverlayOpen && !state.ui.overlayCloseLocked) {
+            const overlay = $('overlay-container');
+            const panel = $('settings-panel');
+            if (overlay && overlay.classList.contains('active') && !overlay.contains(e.target)) {
+                window.closeOverlay();
+            } else if (panel && panel.contains(e.target) && !e.target.closest('button') && !e.target.closest('input')) {
+                // Ignore panel clicks
+            }
         }
     });
     
@@ -908,11 +935,17 @@ export function initHRNchat(customConfig = {}) {
         renderPickerSelectedUsers();
         window.showOverlayView('access-manager');
         window.openOverlay();
+        state.ui.overlayCloseLocked = true;
         $('picker-id-input').value = '';
         $('picker-id-input').focus();
     };
 
-    window.closeAccessManager = () => { if (state.currentPickerContext === 'edit-room') window.showOverlayView('room-settings'); else window.closeOverlay(); updateAccessSummary(state.currentPickerContext); };
+    window.closeAccessManager = () => { 
+        state.ui.overlayCloseLocked = false;
+        if (state.currentPickerContext === 'edit-room') window.showOverlayView('room-settings');
+        else window.closeOverlay(); 
+        updateAccessSummary(state.currentPickerContext); 
+    };
 
     const renderPickerSelectedUsers = () => {
         const container = $('picker-selected-list');
@@ -979,7 +1012,7 @@ export function initHRNchat(customConfig = {}) {
         const oc = $('overlay-container');
         if (oc) {
             oc.classList.add('active');
-            state.ui.isOverlayOpen = true;
+            setTimeout(() => { state.ui.isOverlayOpen = true; }, 50);
         }
     };
 
@@ -988,6 +1021,7 @@ export function initHRNchat(customConfig = {}) {
         if (oc) {
             oc.classList.remove('active');
             state.ui.isOverlayOpen = false;
+            state.ui.overlayCloseLocked = false;
         }
     };
 
@@ -1126,25 +1160,18 @@ export function initHRNchat(customConfig = {}) {
         const date = new Date(room.created_at);
         $('info-date').innerText = `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
         
+        const display = await resolveRoomDisplay(room);
+        $('info-name').innerText = display.name;
+        const avEl = $('info-avatar');
+        if (display.avatar) avEl.innerHTML = `<img src="${display.avatar}">`;
+        else avEl.innerText = display.name.charAt(0);
+
         if (room.is_direct) {
             $('info-type').innerText = "Direct Message";
             creatorRow.style.display = 'none';
-            const otherId = room.allowed_users?.find(id => id !== state.user.id);
-            if (otherId) {
-                const profile = await getProfile(otherId);
-                if (profile) {
-                    $('info-name').innerText = profile.full_name;
-                    const avEl = $('info-avatar');
-                    if (profile.cached_avatar || profile.avatar_url) avEl.innerHTML = `<img src="${profile.cached_avatar || profile.avatar_url}">`;
-                    else avEl.innerText = (profile.full_name || 'U').charAt(0);
-                } else { $('info-name').innerText = 'User'; }
-            }
             delBtn.style.display = 'flex';
         } else {
             $('info-type').innerText = "Group Chat";
-            $('info-name').innerText = room.name;
-            const avEl = $('info-avatar');
-            if (room.avatar_url) avEl.innerHTML = `<img src="${room.avatar_url}">`; else avEl.innerText = room.name.charAt(0);
             creatorRow.style.display = 'flex';
             if (room.created_by) {
                 let profile = state.profileCache[room.created_by];
@@ -1221,15 +1248,7 @@ export function initHRNchat(customConfig = {}) {
         const { data: updatedRoom } = await db.from('rooms').select('*').eq('id', state.currentRoomId).single();
         state.currentRoomData = updatedRoom;
         
-        if (state.currentRoomData.is_direct) {
-            const otherId = state.currentRoomData.allowed_users?.find(uid => uid !== state.user.id);
-            if (otherId) {
-                const profile = await getProfile(otherId);
-                state.currentRoomDisplay = { name: profile?.full_name || 'User', avatar: profile?.cached_avatar || profile?.avatar_url };
-            }
-        } else {
-            state.currentRoomDisplay = { name: updatedRoom.name, avatar: updatedRoom.avatar_url };
-        }
+        state.currentRoomDisplay = await resolveRoomDisplay(updatedRoom);
         $('chat-title').innerText = state.currentRoomDisplay.name;
         
         window.toast("Saved.");
@@ -1281,19 +1300,8 @@ export function initHRNchat(customConfig = {}) {
         state.currentRoomData = roomData;
         const isDirect = roomData?.is_direct;
         
-        state.currentRoomDisplay = { name: roomData.name, avatar: roomData?.avatar_url };
+        state.currentRoomDisplay = await resolveRoomDisplay(roomData);
 
-        if (isDirect) {
-            const otherUserId = roomData?.allowed_users?.find(uid => uid !== state.user.id);
-            if (otherUserId) {
-                const profile = await getProfile(otherUserId);
-                if (profile) {
-                    state.currentRoomDisplay.name = profile.full_name;
-                    state.currentRoomDisplay.avatar = profile.cached_avatar || profile.avatar_url;
-                }
-            }
-        }
-        
         $('chat-title').innerText = state.currentRoomDisplay.name;
         const avEl = $('chat-avatar-display');
         if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`;
@@ -1614,18 +1622,8 @@ export function initHRNchat(customConfig = {}) {
             const processed = [];
             const promises = rooms.map(async (r) => {
                 if (!r || !r.id) return null;
-                let name = r.name, avatar = r.avatar_url;
-                if (r.is_direct && r.allowed_users) {
-                    const otherId = r.allowed_users.find(id => id !== uid);
-                    if (otherId) {
-                        const profile = await getProfile(otherId);
-                        if (profile) {
-                            name = profile.full_name;
-                            avatar = profile.cached_avatar || profile.avatar_url;
-                        }
-                    }
-                }
-                return { ...r, display_name: name, display_avatar: avatar };
+                const display = await resolveRoomDisplay(r);
+                return { ...r, display_name: display.name, display_avatar: display.avatar };
             });
             return (await Promise.all(promises)).filter(Boolean);
         };
