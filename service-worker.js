@@ -1,4 +1,4 @@
-const CACHE_NAME = "hrn-cache-v1.0.10";
+const CACHE_NAME = "hrn-cache-v1.0.11";
 
 const BASE_PATH = ""; // root van username.github.io
 
