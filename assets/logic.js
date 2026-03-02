@@ -1,7 +1,7 @@
 /* 
  *  © 2026 
  *  GitHub: https://github.com/HyperRushNet/chat-app
- *  Version: 1.0.9
+ *  Version: 1.1.0
  *  assets/logic.js 
  *  MIT License
  */
@@ -354,7 +354,9 @@ export function initHRNchat(customConfig = {}) {
     const getProfile = async (userId) => {
         if (!userId) return null;
         if (state.profileCache[userId]) return state.profileCache[userId];
+        
         let profile = await localDB.get('profiles', userId);
+        
         if (!state.isOfflineMode) {
             try {
                 const { data: serverProfile, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', userId).single();
@@ -362,12 +364,12 @@ export function initHRNchat(customConfig = {}) {
                     const localTime = profile?.updated_at ? new Date(profile.updated_at).getTime() : 0;
                     const serverTime = serverProfile.updated_at ? new Date(serverProfile.updated_at).getTime() : 0;
                     const needsUpdate = !profile || serverTime > localTime || profile.avatar_url !== serverProfile.avatar_url;
+                    
                     if (needsUpdate) {
                         const newProfileData = { ...serverProfile };
                         const urlChanged = !profile || profile.avatar_url !== serverProfile.avatar_url;
                         const needsImageCache = urlChanged || !profile?.cached_avatar;
                         
-                        // If we have a cached avatar locally and the URL hasn't changed, keep it
                         if (!needsImageCache && profile.cached_avatar) {
                             newProfileData.cached_avatar = profile.cached_avatar;
                         }
@@ -380,8 +382,12 @@ export function initHRNchat(customConfig = {}) {
                             profile = newProfileData;
                         }
                     }
+                } else if (error) {
+                    console.warn(`[HRN] Profile fetch error for ${userId}:`, error.message);
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.error("[HRN] GetProfile exception:", e);
+            }
         }
         if (profile) state.profileCache[userId] = profile;
         return profile;
@@ -398,6 +404,7 @@ export function initHRNchat(customConfig = {}) {
         if (!myId) return { name: 'Direct Message', avatar: null };
         
         if (!room.allowed_users || room.allowed_users.length === 0) {
+            console.warn("[HRN] DM Resolver: allowed_users is empty for room", room.id);
             return { name: 'Direct Message', avatar: null };
         }
         
@@ -408,17 +415,22 @@ export function initHRNchat(customConfig = {}) {
         const otherId = otherIds.length > 0 ? otherIds[0] : null;
         
         if (!otherId) {
-            // Fallback if somehow only we are in the list
+            console.warn("[HRN] DM Resolver: Could not find otherId. MyID:", myId, "List:", room.allowed_users);
             return { name: 'Direct Message', avatar: null };
         }
 
         // 3. Fetch the profile of the other user
         const profile = await getProfile(otherId);
         
+        if (!profile) {
+            console.warn("[HRN] DM Resolver: Profile not found for ID", otherId);
+            return { name: 'Unknown User', avatar: null };
+        }
+
         // 4. Return their details
         return {
-            name: profile?.full_name || 'User',
-            avatar: profile?.cached_avatar || profile?.avatar_url
+            name: profile.full_name || 'User',
+            avatar: profile.cached_avatar || profile.avatar_url
         };
     };
 
@@ -987,15 +999,22 @@ export function initHRNchat(customConfig = {}) {
     };
 
     window.removePickerUser = (id) => { state.selectedAllowedUsers = state.selectedAllowedUsers.filter(u => u.id !== id); renderPickerSelectedUsers(); };
+    
+    // FIX: Save profile to localDB when adding user
     window.addUserById = async () => {
         const input = $('picker-id-input');
         const id = input.value.trim();
         if (!id) return window.toast("Enter an ID.");
         if (state.selectedAllowedUsers.find(u => u.id === id)) return window.toast("User already added.");
         window.setLoading(true, "Fetching...");
-        const { data, error } = await db.from('profiles').select('id, full_name, avatar_url').eq('id', id).single();
+        const { data, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', id).single();
         window.setLoading(false);
         if (error || !data) return window.toast("User not found.");
+        
+        // Cache immediately
+        await localDB.put('profiles', data);
+        state.profileCache[data.id] = data;
+        
         state.selectedAllowedUsers.push({ id: data.id, name: data.full_name, avatar: data.avatar_url });
         renderPickerSelectedUsers();
         input.value = '';
@@ -1513,6 +1532,7 @@ export function initHRNchat(customConfig = {}) {
         else { localStorage.setItem('hrn_auth_email', temp.em); localStorage.setItem('hrn_auth_pass', temp.p); window.nav('scr-lobby'); window.loadRooms(); window.setLoading(false); }
     };
 
+    // FIX: Save target user profile to localDB immediately upon creation
     window.handleCreate = async (e) => {
         if (!e || !e.isTrusted) return;
         if (state.processingAction) return;
@@ -1524,8 +1544,13 @@ export function initHRNchat(customConfig = {}) {
         if (isDirect) {
             targetUser = $('c-target-user').value.trim();
             if (!targetUser) { window.toast("User ID required."); state.processingAction = false; return; }
-            const { data: profile, error } = await db.from('profiles').select('full_name').eq('id', targetUser).single();
+            const { data: profile, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', targetUser).single();
             if (error || !profile) { window.toast("User not found."); state.processingAction = false; return; }
+            
+            // Cache the target user immediately!
+            await localDB.put('profiles', profile);
+            state.profileCache[profile.id] = profile;
+            
             n = "Direct Message";
             isVisible = true;
         } else {
