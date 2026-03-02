@@ -1016,7 +1016,7 @@ export function initHRNchat(customConfig = {}) {
         const oc = $('overlay-container');
         if (oc) {
             oc.classList.add('active');
-            setTimeout(() => { state.ui.isOverlayOpen = true; }, 50);
+            state.ui.isOverlayOpen = true;
         }
     };
 
@@ -1289,12 +1289,8 @@ export function initHRNchat(customConfig = {}) {
         const chatContainer = $('chat-messages');
         chatContainer.innerHTML = '';
         chatContainer.onscroll = handleScroll;
-        
         let roomData = cachedData;
-        if (!roomData || !roomData.allowed_users) { 
-            roomData = await localDB.get('rooms', id); 
-        }
-        
+        if (!roomData || !roomData.allowed_users) { roomData = await localDB.get('rooms', id); }
         if (!state.isOfflineMode) {
             try {
                 const { data: netRoom } = await db.from('rooms').select('*').eq('id', id).single();
@@ -1670,7 +1666,7 @@ export function initHRNchat(customConfig = {}) {
         const meta = await localDB.get('rooms', id);
         const openLocal = async () => {
             if (meta && meta.id) {
-                state.pending = { id: meta.id, name: meta.name, salt: meta.salt, is_direct: meta.is_direct, allowed_users: meta.allowed_users };
+                state.pending = { id: meta.id, name: meta.name, salt: meta.salt };
                 if (meta.has_password) { window.nav('scr-gate'); }
                 else { await window.openVault(meta.id, meta.name, null, meta.salt, meta); }
             } else { window.toast("Chat not found."); }
@@ -1685,7 +1681,7 @@ export function initHRNchat(customConfig = {}) {
             if (error) throw error;
             window.setLoading(false);
             if (data && data.id) await localDB.put('rooms', data);
-            state.pending = { id: data.id, name: data.name, salt: data.salt, is_direct: data.is_direct, allowed_users: data.allowed_users };
+            state.pending = { id: data.id, name: data.name, salt: data.salt };
             if (data.has_password) window.nav('scr-gate');
             else window.openVault(data.id, data.name, null, data.salt, data);
         } catch (e) {
@@ -1709,7 +1705,7 @@ export function initHRNchat(customConfig = {}) {
             window.setLoading(false);
             if (data) {
                 await localDB.put('rooms', data);
-                state.pending = { id: data.id, name: data.name, salt: data.salt, is_direct: data.is_direct, allowed_users: data.allowed_users };
+                state.pending = { id: data.id, name: data.name, salt: data.salt };
                 if (data.has_password) window.nav('scr-gate');
                 else window.openVault(data.id, data.name, null, data.salt, data);
             } else window.toast("Chat not found.");
