@@ -1,7 +1,7 @@
 /* 
  *  © 2026 
  *  GitHub: https://github.com/HyperRushNet/chat-app
- *  Version: 1.0.8
+ *  Version: 1.0.9
  *  assets/logic.js 
  *  MIT License
  */
@@ -324,7 +324,8 @@ export function initHRNchat(customConfig = {}) {
     };
 
     const cacheAvatar = async (profile) => {
-        if (!profile || !profile.avatar_url) return profile;
+        if (!profile) return profile;
+        if (!profile.avatar_url) return profile;
         
         // Skip proxy for base64/data URLs
         if (profile.avatar_url.startsWith('data:')) {
@@ -364,9 +365,9 @@ export function initHRNchat(customConfig = {}) {
                     if (needsUpdate) {
                         const newProfileData = { ...serverProfile };
                         const urlChanged = !profile || profile.avatar_url !== serverProfile.avatar_url;
-                        const needsImageCache = urlChanged || !profile.cached_avatar;
+                        const needsImageCache = urlChanged || !profile?.cached_avatar;
                         
-                        // If we have a cached avatar locally and the URL hasn't changed, keep it to prevent flickering
+                        // If we have a cached avatar locally and the URL hasn't changed, keep it
                         if (!needsImageCache && profile.cached_avatar) {
                             newProfileData.cached_avatar = profile.cached_avatar;
                         }
@@ -392,7 +393,7 @@ export function initHRNchat(customConfig = {}) {
         // Group Chat Logic
         if (!room.is_direct) return { name: room.name, avatar: room.avatar_url };
         
-        // Direct Message Logic
+        // --- ROBUST DIRECT MESSAGE LOGIC ---
         const myId = state.user?.id;
         if (!myId) return { name: 'Direct Message', avatar: null };
         
@@ -400,10 +401,21 @@ export function initHRNchat(customConfig = {}) {
             return { name: 'Direct Message', avatar: null };
         }
         
-        const otherId = room.allowed_users.find(id => id !== myId);
-        if (!otherId) return { name: 'Direct Message', avatar: null };
+        // 1. Filter out myself and any wildcard '*' characters
+        const otherIds = room.allowed_users.filter(id => id !== myId && id !== '*');
         
+        // 2. Pick the first valid "other" ID
+        const otherId = otherIds.length > 0 ? otherIds[0] : null;
+        
+        if (!otherId) {
+            // Fallback if somehow only we are in the list
+            return { name: 'Direct Message', avatar: null };
+        }
+
+        // 3. Fetch the profile of the other user
         const profile = await getProfile(otherId);
+        
+        // 4. Return their details
         return {
             name: profile?.full_name || 'User',
             avatar: profile?.cached_avatar || profile?.avatar_url
