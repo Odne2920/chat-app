@@ -1,7 +1,7 @@
 /* 
  *  © 2026 
  *  GitHub: https://github.com/HyperRushNet/chat-app
- *  Version: 1.0.5
+ *  Version: 1.0.5 (DEBUG_BUILD)
  *  assets/logic.js 
  *  MIT License
  */
@@ -10,6 +10,27 @@ import {
 } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
 export function initHRNchat(customConfig = {}) {
+    // --- DEBUG LOGGER ---
+    const DEBUG = true;
+    const LOG = (category, ...args) => {
+        if (!DEBUG) return;
+        const styles = {
+            'NET': 'color: #3b82f6; font-weight: bold;', // Blue for Network
+            'DB': 'color: #10b981; font-weight: bold;', // Green for IndexedDB
+            'UI': 'color: #f59e0b; font-weight: bold;', // Yellow for UI
+            'STATE': 'color: #8b5cf6; font-weight: bold;', // Purple for State
+            'CRYPTO': 'color: #ec4899; font-weight: bold;', // Pink for Crypto
+            'ERROR': 'color: #ef4444; font-weight: bold; background: #fef2f2;', // Red for Errors
+            'WARN': 'color: #f97316; font-weight: bold;',
+            'EVENT': 'color: #06b6d4; font-weight: bold;'
+        };
+        const style = styles[category] || 'color: gray;';
+        console.log(`%c[${category}]`, style, ...args);
+    };
+
+    LOG('UI', '=== HRN CHAT DEBUG MODE ENABLED ===');
+    LOG('UI', 'Initializing with config:', customConfig);
+
     const CONFIG = {
         supabaseUrl: customConfig.supabaseUrl || "https://jnhsuniduzvhkpexorqk.supabase.co",
         supabaseKey: customConfig.supabaseKey || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpuaHN1bmlkdXp2aGtwZXhvcnFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1NjAxMDYsImV4cCI6MjA4NzEzNjEwNn0.9I5bbqskCgksUaNWYlFFo0-6Odht28pOMdxTGZECahY",
@@ -23,6 +44,7 @@ export function initHRNchat(customConfig = {}) {
         maxMessageLength: customConfig.maxMessageLength || 2000,
         proxyUrl: customConfig.proxyUrl || "https://vercel-serverless-hrn.vercel.app/api/CORSproxy.js?url="
     };
+    LOG('STATE', 'Configuration loaded:', CONFIG);
 
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
     const DB_NAME = 'HRN_LOCAL_DB';
@@ -94,23 +116,34 @@ export function initHRNchat(customConfig = {}) {
     let toastVisible = false;
     const tabChannel = new BroadcastChannel('hrn_tab_sync');
 
+    // --- LOCAL DB WRAPPER WITH LOGGING ---
     const localDB = {
         db: null,
         async init() {
+            LOG('DB', 'Initializing IndexedDB...');
             return new Promise((resolve, reject) => {
                 const request = indexedDB.open(DB_NAME, DB_VERSION);
-                request.onerror = (e) => reject(request.error);
+                request.onerror = (e) => {
+                    LOG('ERROR', 'IndexedDB open error:', request.error);
+                    reject(request.error);
+                };
                 request.onsuccess = () => {
                     this.db = request.result;
+                    LOG('DB', 'IndexedDB opened successfully');
                     resolve();
                 };
                 request.onupgradeneeded = (e) => {
+                    LOG('DB', 'IndexedDB upgrade needed. Old version:', e.oldVersion);
                     const db = e.target.result;
                     const tx = e.target.transaction;
-                    if (!db.objectStoreNames.contains('rooms')) db.createObjectStore('rooms', { keyPath: 'id' });
+                    if (!db.objectStoreNames.contains('rooms')) {
+                        db.createObjectStore('rooms', { keyPath: 'id' });
+                        LOG('DB', 'Created object store: rooms');
+                    }
                     if (!db.objectStoreNames.contains('messages')) {
                         const ms = db.createObjectStore('messages', { keyPath: 'id' });
                         ms.createIndex('room_id', 'room_id', { unique: false });
+                        LOG('DB', 'Created object store: messages with index room_id');
                     } else {
                         const ms = tx.objectStore('messages');
                         if (!ms.indexNames.contains('room_id')) ms.createIndex('room_id', 'room_id', { unique: false });
@@ -123,25 +156,34 @@ export function initHRNchat(customConfig = {}) {
             });
         },
         async get(store, key) {
+            LOG('DB', `Getting key "${key}" from store "${store}"`);
             return new Promise((res, rej) => {
                 if (!this.db) return rej("DB not init");
                 const tx = this.db.transaction(store, 'readonly');
                 const req = tx.objectStore(store).get(key);
-                req.onsuccess = () => res(req.result);
+                req.onsuccess = () => {
+                    LOG('DB', `Got result for key "${key}":`, req.result);
+                    res(req.result);
+                };
                 req.onerror = () => rej(req.error);
             });
         },
         async getAll(store) {
+            LOG('DB', `Getting all from store "${store}"`);
             return new Promise((res, rej) => {
                 if (!this.db) return res([]);
                 const tx = this.db.transaction(store, 'readonly');
                 const req = tx.objectStore(store).getAll();
-                req.onsuccess = () => res(req.result || []);
+                req.onsuccess = () => {
+                    LOG('DB', `Got ${req.result?.length || 0} items from "${store}"`);
+                    res(req.result || []);
+                };
                 req.onerror = () => rej(req.error);
             });
         },
         async put(store, val) {
             if (!val || !val.id) return;
+            LOG('DB', `Putting item into "${store}":`, val);
             return new Promise((res, rej) => {
                 if (!this.db) return rej("DB not init");
                 const tx = this.db.transaction(store, 'readwrite');
@@ -152,6 +194,7 @@ export function initHRNchat(customConfig = {}) {
         },
         async putAll(store, vals) {
             if (!vals || vals.length === 0) return;
+            LOG('DB', `Putting ${vals.length} items into "${store}"`);
             return new Promise((res, rej) => {
                 if (!this.db) return rej("DB not init");
                 const tx = this.db.transaction(store, 'readwrite');
@@ -162,6 +205,7 @@ export function initHRNchat(customConfig = {}) {
             });
         },
         async clear(store) {
+            LOG('WARN', `Clearing store "${store}"`);
             return new Promise((res, rej) => {
                 if (!this.db) return res();
                 const tx = this.db.transaction(store, 'readwrite');
@@ -171,6 +215,7 @@ export function initHRNchat(customConfig = {}) {
             });
         },
         async delete(store, key) {
+            LOG('DB', `Deleting key "${key}" from "${store}"`);
             return new Promise((res, rej) => {
                 if (!this.db) return res();
                 const tx = this.db.transaction(store, 'readwrite');
@@ -180,10 +225,12 @@ export function initHRNchat(customConfig = {}) {
             });
         },
         async getRoomMessages(roomId) {
+            LOG('DB', `Fetching all local messages for room ${roomId}`);
             const all = await this.getAll('messages');
             return all.filter(m => m.room_id === roomId).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
         },
         async clearRoomMessages(roomId) {
+            LOG('DB', `Clearing local messages for room ${roomId}`);
             return new Promise((resolve, reject) => {
                 if (!this.db) return reject();
                 const tx = this.db.transaction('messages', 'readwrite');
@@ -213,6 +260,7 @@ export function initHRNchat(customConfig = {}) {
         auth: { persistSession: false, autoRefreshToken: true },
         realtime: { params: { eventsPerSecond: 10 } }
     });
+    LOG('NET', 'Supabase client created for URL:', CONFIG.supabaseUrl);
 
     const esc = t => { const p = document.createElement('p'); p.textContent = t; return p.innerHTML; };
     const truncateText = (text, maxLength = 20) => !text ? "" : text.length > maxLength ? text.substring(0, maxLength) + "..." : text;
@@ -220,6 +268,7 @@ export function initHRNchat(customConfig = {}) {
     const getTimeFromDate = (d) => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
     const setAppMode = (offline) => {
+        LOG('STATE', `Switching App Mode. Offline: ${offline}`);
         state.isOfflineMode = offline;
         updatePresenceUI();
         updateSendButtonState();
@@ -308,7 +357,7 @@ export function initHRNchat(customConfig = {}) {
         }, 3000);
     };
 
-    window.toast = m => { toastQueue.push(m); processToastQueue(); };
+    window.toast = m => { LOG('UI', `Toast: ${m}`); toastQueue.push(m); processToastQueue(); };
 
     window.setLoading = (s, text = null) => {
         const loader = $('loader-overlay');
@@ -320,11 +369,12 @@ export function initHRNchat(customConfig = {}) {
 
     const safeAwait = async (promise) => {
         try { return [await promise, null]; } 
-        catch (error) { return [null, error]; }
+        catch (error) { LOG('ERROR', 'SafeAwait caught error:', error); return [null, error]; }
     };
 
     const cacheAvatar = async (profile) => {
         if (!profile || !profile.avatar_url) return profile;
+        LOG('NET', `Caching avatar for ${profile.id} via proxy...`);
         try {
             const response = await fetch(CONFIG.proxyUrl + profile.avatar_url);
             if (!response.ok) throw new Error("Invalid image response");
@@ -335,26 +385,32 @@ export function initHRNchat(customConfig = {}) {
                     profile.cached_avatar = reader.result;
                     await localDB.put('profiles', profile);
                     state.profileCache[profile.id] = profile;
+                    LOG('NET', `Avatar cached for ${profile.id}`);
                     resolve(profile);
                 };
                 reader.onerror = () => resolve(profile);
                 reader.readAsDataURL(blob);
             });
-        } catch (e) { return profile; }
+        } catch (e) { LOG('ERROR', 'Avatar cache failed', e); return profile; }
     };
 
     const getProfile = async (userId) => {
         if (!userId) return null;
-        if (state.profileCache[userId]) return state.profileCache[userId];
+        if (state.profileCache[userId]) {
+            LOG('STATE', `Profile ${userId} found in memory cache.`);
+            return state.profileCache[userId];
+        }
         let profile = await localDB.get('profiles', userId);
         if (!state.isOfflineMode) {
             try {
+                LOG('NET', `Fetching profile ${userId} from server...`);
                 const { data: serverProfile, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', userId).single();
                 if (serverProfile) {
                     const localTime = profile?.updated_at ? new Date(profile.updated_at).getTime() : 0;
                     const serverTime = serverProfile.updated_at ? new Date(serverProfile.updated_at).getTime() : 0;
                     const needsUpdate = !profile || serverTime > localTime || profile.avatar_url !== serverProfile.avatar_url;
                     if (needsUpdate) {
+                        LOG('NET', `Profile ${userId} needs update.`);
                         const newProfileData = { ...serverProfile };
                         const urlChanged = !profile || profile.avatar_url !== serverProfile.avatar_url;
                         const needsImageCache = urlChanged || !profile.cached_avatar;
@@ -398,18 +454,22 @@ export function initHRNchat(customConfig = {}) {
     const workerCode = `
         self.onmessage = async (e) => { 
             const { id, type, payload } = e.data; 
+            console.log('[CRYPTO_WORKER] Task received:', type, 'ID:', id);
             const encoder = new TextEncoder(); 
             const decoder = new TextDecoder(); 
             self.keys = self.keys || {};
             
             try { 
                 if (type === 'deriveKey') { 
+                    console.log('[CRYPTO_WORKER] Deriving key...');
                     const keyMaterial = await crypto.subtle.importKey('raw', encoder.encode(payload.password), { name: 'PBKDF2' }, false, ['deriveKey']); 
                     const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: encoder.encode(payload.salt), iterations: 300000, hash: 'SHA-256' }, keyMaterial, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']); 
                     self.keys[payload.keyId] = key; 
+                    console.log('[CRYPTO_WORKER] Key derived successfully.');
                     self.postMessage({ id, type: 'keyDerived', success: true }); 
                 } else if (type === 'encrypt') { 
                     if (!self.keys[payload.keyId]) throw new Error("Key not derived"); 
+                    console.log('[CRYPTO_WORKER] Encrypting message...');
                     const iv = crypto.getRandomValues(new Uint8Array(12)); 
                     const encoded = encoder.encode(payload.text); 
                     const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, self.keys[payload.keyId], encoded); 
@@ -417,9 +477,11 @@ export function initHRNchat(customConfig = {}) {
                     combined.set(iv, 0); 
                     combined.set(new Uint8Array(ciphertext), iv.length); 
                     const base64 = btoa(String.fromCharCode(...combined)); 
+                    console.log('[CRYPTO_WORKER] Encryption done.');
                     self.postMessage({ id, type: 'encrypted', result: base64 }); 
                 } else if (type === 'decryptHistory') { 
                     if (!self.keys[payload.keyId]) throw new Error("Key not derived"); 
+                    console.log('[CRYPTO_WORKER] Decrypting history batch of ' + payload.messages.length + ' messages.');
                     const results = []; 
                     for (const m of payload.messages) { 
                         try { 
@@ -437,9 +499,11 @@ export function initHRNchat(customConfig = {}) {
                             const parts = text.split('|'); 
                             results.push({ id: m.id, time: parts[0], text: parts.slice(1).join('|'), user_id: m.user_id, user_name: m.user_name, created_at: m.created_at, updated_at: m.updated_at }); 
                         } catch (err) { 
+                            console.error('[CRYPTO_WORKER] Failed to decrypt msg ' + m.id);
                             results.push({ id: m.id, error: true }); 
                         } 
                     } 
+                    console.log('[CRYPTO_WORKER] History decryption done.');
                     self.postMessage({ id, type: 'historyDecrypted', results }); 
                 } else if (type === 'decryptSingle') { 
                     if (!self.keys[payload.keyId]) throw new Error("Key not derived"); 
@@ -456,12 +520,15 @@ export function initHRNchat(customConfig = {}) {
                         const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, self.keys[payload.keyId], ciphertext); 
                         const text = decoder.decode(decrypted); 
                         const parts = text.split('|'); 
+                        console.log('[CRYPTO_WORKER] Single message decrypted.');
                         self.postMessage({ id, type: 'singleDecrypted', result: { time: parts[0], text: parts.slice(1).join('|') } }); 
                     } catch(e) { 
+                        console.error('[CRYPTO_WORKER] Single decrypt error:', e);
                         self.postMessage({ id, type: 'singleDecrypted', error: e.message }); 
                     } 
                 } 
             } catch (error) { 
+                console.error('[CRYPTO_WORKER] Fatal Error:', error);
                 self.postMessage({ id, type: 'error', message: error.message }); 
             } 
         };
@@ -498,8 +565,12 @@ export function initHRNchat(customConfig = {}) {
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     };
-    const deriveKey = (pass, salt, keyId) => workerExec('deriveKey', { password: pass, salt: salt, keyId: keyId });
+    const deriveKey = (pass, salt, keyId) => {
+        LOG('CRYPTO', `Deriving key for room ${keyId}`);
+        return workerExec('deriveKey', { password: pass, salt: salt, keyId: keyId });
+    };
     const encryptMessage = async (text, keyId) => {
+        LOG('CRYPTO', `Encrypting message for room ${keyId}`);
         const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         const res = await workerExec('encrypt', { text: time + "|" + text, keyId: keyId });
         return res.result;
@@ -519,6 +590,7 @@ export function initHRNchat(customConfig = {}) {
 
     const handleServerFull = async () => {
         if (state.isCapacityBlocked) return;
+        LOG('WARN', 'Server capacity reached. Blocking further actions.');
         state.isCapacityBlocked = true;
         await cleanupChannels(false);
         if (state.globalPresenceChannel) { state.globalPresenceChannel.unsubscribe(); state.globalPresenceChannel = null; }
@@ -534,6 +606,7 @@ export function initHRNchat(customConfig = {}) {
     };
 
     const cleanupChannels = async (keepGlobal = false) => {
+        LOG('NET', `Cleaning up channels. KeepGlobal: ${keepGlobal}`);
         if (state.connectionTimeoutTimer) { clearTimeout(state.connectionTimeoutTimer); state.connectionTimeoutTimer = null; }
         if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
         if (state.heartbeatInterval) { clearInterval(state.heartbeatInterval); state.heartbeatInterval = null; }
@@ -551,11 +624,13 @@ export function initHRNchat(customConfig = {}) {
         const allPresences = Object.values(presState).flat();
         const uniqueUserIds = new Set(allPresences.map(p => p.user_id));
         state.lastKnownOnlineCount = uniqueUserIds.size;
+        LOG('NET', `Presence Sync: ${uniqueUserIds.size} users online in room.`);
         schedulePresenceUpdate();
     };
 
     const setupGlobalPresence = async (userId) => {
         if (state.isOfflineMode || state.isCapacityBlocked) return;
+        LOG('NET', 'Setting up Global Presence for user:', userId);
         if (state.globalPresenceChannel) state.globalPresenceChannel.unsubscribe();
         state.globalPresenceChannel = db.channel('global-presence', { config: { presence: { key: userId || `listener_${state.tabId}` } } });
         state.globalPresenceChannel.on('presence', { event: 'sync' }, async () => {
@@ -565,6 +640,7 @@ export function initHRNchat(customConfig = {}) {
             users.sort((a, b) => new Date(a.online_at) - new Date(b.online_at));
             state.globalOnlineCount = users.length;
             state.globalPresenceReady = true;
+            LOG('NET', `Global Presence Sync: ${users.length} users online total.`);
             schedulePresenceUpdate();
             if (state.user && !state.isOfflineMode && !state.isCapacityBlocked) {
                 if (users.length > CONFIG.maxUsers) {
@@ -573,6 +649,7 @@ export function initHRNchat(customConfig = {}) {
                 }
             }
         }).subscribe(async (status) => {
+            LOG('NET', `Global Presence Status: ${status}`);
             if (status === 'SUBSCRIBED') {
                 if (userId && state.isMasterTab) await state.globalPresenceChannel.track({ user_id: userId, online_at: new Date().toISOString() });
             }
@@ -580,6 +657,7 @@ export function initHRNchat(customConfig = {}) {
     };
 
     const attemptHardReconnect = () => {
+        LOG('NET', 'Attempting hard reconnect...');
         if (!state.user || state.isOfflineMode) return;
         if (state.isCapacityBlocked) return;
         if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
@@ -597,6 +675,7 @@ export function initHRNchat(customConfig = {}) {
     };
 
     window.goOnline = async () => {
+        LOG('UI', 'User triggered Go Online.');
         state.isCapacityBlocked = false;
         const overlay = $('block-overlay');
         if (overlay) overlay.classList.remove('active');
@@ -620,6 +699,7 @@ export function initHRNchat(customConfig = {}) {
     };
 
     window.stayOffline = () => {
+        LOG('UI', 'User chose Stay Offline.');
         const overlay = $('block-overlay');
         if (overlay) overlay.classList.remove('active');
         setAppMode(true);
@@ -629,10 +709,13 @@ export function initHRNchat(customConfig = {}) {
 
     const setupChatChannel = (id) => {
         if (state.isOfflineMode) return;
+        LOG('NET', `Setting up Chat Channel for room ${id}`);
         if (state.chatChannel) state.chatChannel.unsubscribe();
         const isDirect = state.currentRoomData?.is_direct;
         state.chatChannel = db.channel(`room_chat_${id}`, { config: { broadcast: { self: true } } });
+        
         state.chatChannel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `room_id=eq.${id}` }, async (payload) => {
+            LOG('NET', `Realtime INSERT event received. ID: ${payload.new.id}`);
             const m = payload.new;
             if (m && state.currentRoomId) {
                 try {
@@ -651,6 +734,7 @@ export function initHRNchat(customConfig = {}) {
                 } catch (e) {}
             }
         }).on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `room_id=eq.${id}` }, async (payload) => {
+            LOG('NET', `Realtime UPDATE event received. ID: ${payload.new.id}`);
             const m = payload.new;
             const msgEl = document.querySelector(`.msg[data-id="${m.id}"]`);
             if (msgEl) {
@@ -675,6 +759,7 @@ export function initHRNchat(customConfig = {}) {
                 } catch (e) {}
             }
         }).subscribe((status) => {
+            LOG('NET', `Chat Channel Status: ${status}`);
             state.isChatChannelReady = (status === 'SUBSCRIBED');
             if (status === 'SUBSCRIBED') {
                 if (state.connectionTimeoutTimer) { clearTimeout(state.connectionTimeoutTimer); state.connectionTimeoutTimer = null; }
@@ -693,11 +778,13 @@ export function initHRNchat(customConfig = {}) {
 
     const initRoomPresence = async (roomId) => {
         if (!state.user || state.isOfflineMode) return;
+        LOG('NET', `Initializing Room Presence for ${roomId}`);
         if (state.presenceChannel) state.presenceChannel.unsubscribe();
         const myId = state.user.id;
         state.presenceChannel = db.channel(`room_presence:${roomId}`, { config: { presence: { key: myId } } });
         state.presenceChannel.on('presence', { event: 'sync' }, () => { if (!state.presenceChannel) return; queryOnlineCountImmediately(); })
         .subscribe(async (status, err) => {
+            LOG('NET', `Room Presence Status: ${status}`);
             if (status === 'SUBSCRIBED') {
                 if (!state.presenceChannel) return;
                 state.isPresenceSubscribed = true;
@@ -722,9 +809,10 @@ export function initHRNchat(customConfig = {}) {
             else { setConnectionVisuals('connecting'); if (state.currentRoomId) attemptHardReconnect(); else setConnectionVisuals('connected'); }
         };
         const offlineHandler = () => { setAppMode(true); if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer); if (state.reconnectTimer) clearTimeout(state.reconnectTimer); state.isReconnecting = false; };
-        window.addEventListener('online', onlineHandler);
-        window.addEventListener('offline', offlineHandler);
+        window.addEventListener('online', () => { LOG('EVENT', 'Browser Event: ONLINE'); onlineHandler(); });
+        window.addEventListener('offline', () => { LOG('EVENT', 'Browser Event: OFFLINE'); offlineHandler(); });
         document.addEventListener('visibilitychange', () => {
+            LOG('EVENT', `Browser Event: VISIBILITY_CHANGE (${document.visibilityState})`);
             if (document.visibilityState === 'visible') {
                 if (state.isCapacityBlocked) return;
                 if (state.isOfflineMode) return;
@@ -738,6 +826,7 @@ export function initHRNchat(customConfig = {}) {
         if (msgEl.classList.contains('msg-deleted')) return;
         e.preventDefault();
         e.stopPropagation();
+        LOG('UI', 'Showing context menu for message:', msgEl.dataset.id);
         const msgData = { id: msgEl.dataset.id, user_id: msgEl.dataset.uid, created_at: msgEl.dataset.time, text: msgEl.dataset.text };
         const menu = $('context-menu');
         const editBtn = $('ctx-edit');
@@ -776,16 +865,18 @@ export function initHRNchat(customConfig = {}) {
     $('ctx-edit').onclick = (e) => {
         e.stopPropagation();
         if (!state.contextTarget) return;
+        LOG('UI', 'Context Action: EDIT');
         state.editingMessage = state.contextTarget;
         $('edit-msg-input').value = state.contextTarget.text;
         window.showOverlayView('edit-message');
         window.openOverlay();
         hideContextMenu();
     };
-    $('ctx-copy').onclick = (e) => { e.stopPropagation(); if (!state.contextTarget) return; navigator.clipboard.writeText(state.contextTarget.text); window.toast("Copied."); hideContextMenu(); };
+    $('ctx-copy').onclick = (e) => { e.stopPropagation(); if (!state.contextTarget) return; LOG('UI', 'Context Action: COPY'); navigator.clipboard.writeText(state.contextTarget.text); window.toast("Copied."); hideContextMenu(); };
     $('ctx-delete').onclick = async (e) => {
         e.stopPropagation();
         if (!state.contextTarget || !state.user) return;
+        LOG('UI', 'Context Action: DELETE');
         const idToDelete = state.contextTarget.id;
         hideContextMenu();
         window.setLoading(true, "Deleting...");
@@ -802,6 +893,7 @@ export function initHRNchat(customConfig = {}) {
         const now = new Date();
         if ((now - msgDate) / 60000 >= 15) { window.toast("Edit time expired."); window.closeOverlay(); state.editingMessage = null; return; }
         window.setLoading(true, "Saving...");
+        LOG('NET', `Updating message ${state.editingMessage.id}`);
         try {
             const enc = await encryptMessage(v, state.currentRoomId);
             const { error } = await db.from('messages').update({ content: enc }).eq('id', state.editingMessage.id);
@@ -966,6 +1058,7 @@ export function initHRNchat(customConfig = {}) {
         if (!id) return window.toast("Enter an ID.");
         if (state.selectedAllowedUsers.find(u => u.id === id)) return window.toast("User already added.");
         window.setLoading(true, "Fetching...");
+        LOG('NET', `Fetching user profile for ID: ${id}`);
         const { data, error } = await db.from('profiles').select('id, full_name, avatar_url').eq('id', id).single();
         window.setLoading(false);
         if (error || !data) return window.toast("User not found.");
@@ -985,6 +1078,7 @@ export function initHRNchat(customConfig = {}) {
 
     window.forceClaimMaster = () => {
         if (!state.isMasterTab) {
+            LOG('EVENT', 'Forcing master tab claim.');
             state.isMasterTab = true;
             tabChannel.postMessage({ type: 'CLAIM_MASTER', id: state.tabId });
             $('block-overlay').classList.remove('active');
@@ -995,6 +1089,7 @@ export function initHRNchat(customConfig = {}) {
     tabChannel.onmessage = (ev) => {
         if (ev.data.type === 'CLAIM_MASTER' && ev.data.id !== state.tabId) {
             if (state.isMasterTab) {
+                LOG('EVENT', 'Master tab claim received from another tab. Standing down.');
                 cleanupChannels();
                 if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
                 state.heartbeatInterval = null;
@@ -1017,6 +1112,7 @@ export function initHRNchat(customConfig = {}) {
         if (oc) {
             oc.classList.add('active');
             state.ui.isOverlayOpen = true;
+            LOG('UI', 'Overlay opened.');
         }
     };
 
@@ -1026,6 +1122,7 @@ export function initHRNchat(customConfig = {}) {
             oc.classList.remove('active');
             state.ui.isOverlayOpen = false;
             state.ui.overlayCloseLocked = false;
+            LOG('UI', 'Overlay closed.');
         }
     };
 
@@ -1039,6 +1136,7 @@ export function initHRNchat(customConfig = {}) {
 
     window.prepareAccountPage = async () => {
         if (!state.user) return;
+        LOG('UI', 'Preparing Account Page.');
         const { data: profile } = await db.from('profiles').select('avatar_url, full_name').eq('id', state.user.id).single();
         const name = profile?.full_name || state.user.user_metadata?.full_name || "User";
         const avatar = profile?.avatar_url || state.user.user_metadata?.avatar_url;
@@ -1127,12 +1225,17 @@ export function initHRNchat(customConfig = {}) {
     const loadMoreHistory = async () => {
         if (!state.oldestMessageTimestamp || !state.currentRoomId) return;
         state.isLoadingHistory = true;
+        LOG('NET', 'Loading more history...');
         const container = $('chat-messages');
         const oldScrollHeight = container.scrollHeight;
         container.insertAdjacentHTML('afterbegin', '<div id="history-loader" style="text-align:center;padding:10px;font-size:11px;color:var(--text-mute)">Loading...</div>');
+        
         const { data, error } = await db.from('messages').select('*').eq('room_id', state.currentRoomId).lt('created_at', state.oldestMessageTimestamp).order('created_at', { ascending: false }).limit(CONFIG.historyLoadLimit);
+        
         const loader = $('history-loader'); if (loader) loader.remove();
-        if (error || !data || data.length === 0) { state.hasMoreHistory = false; state.isLoadingHistory = false; return; }
+        if (error || !data || data.length === 0) { state.hasMoreHistory = false; state.isLoadingHistory = false; LOG('NET', 'No more history found.'); return; }
+        
+        LOG('NET', `Loaded ${data.length} historical messages.`);
         data.reverse();
         try {
             const res = await workerExec('decryptHistory', { messages: data, keyId: state.currentRoomId });
@@ -1152,6 +1255,7 @@ export function initHRNchat(customConfig = {}) {
 
     window.openRoomInfo = async () => {
         if (!state.currentRoomData) return;
+        LOG('UI', 'Opening Room Info.');
         window.setLoading(true, "Loading info...");
         const room = state.currentRoomData;
         const delBtn = $('info-delete-btn');
@@ -1203,6 +1307,7 @@ export function initHRNchat(customConfig = {}) {
     window.openRoomSettings = async () => {
         window.closeOverlay();
         if (!state.currentRoomId || !state.currentRoomData || state.currentRoomData.created_by !== state.user.id) return window.toast("Access denied.");
+        LOG('UI', 'Opening Room Settings (Edit Mode).');
         window.setLoading(true, "Loading...");
         const room = state.currentRoomData;
         state.currentStep.edit = 1;
@@ -1232,6 +1337,8 @@ export function initHRNchat(customConfig = {}) {
         if (!e || !e.isTrusted) return;
         if (state.processingAction) return;
         state.processingAction = true;
+        LOG('NET', 'Saving Room Settings...');
+        
         const name = $('edit-room-name').value.trim();
         const isVisible = $('edit-room-visible').checked;
         const newPass = $('edit-room-pass').value;
@@ -1245,10 +1352,23 @@ export function initHRNchat(customConfig = {}) {
         const updates = { name, is_visible: isVisible, allowed_users: allowedUsers };
         if (isRemovingPass) updates.has_password = false;
         else if (isChangingPass) updates.has_password = true;
+        
         const { error: updateError } = await db.from('rooms').update(updates).eq('id', state.currentRoomId);
         if (updateError) { window.toast("Save failed."); window.setLoading(false); state.processingAction = false; return; }
-        if (isRemovingPass) { await db.rpc('set_room_password', { p_room_id: state.currentRoomId, p_hash: null }); state.currentRoomData.has_password = false; }
-        else if (isChangingPass) { const roomSalt = state.currentRoomData.salt; const accessHash = await sha256(newPass + roomSalt); await db.rpc('set_room_password', { p_room_id: state.currentRoomId, p_hash: accessHash }); state.currentRoomData.has_password = true; }
+        
+        if (isRemovingPass) { 
+            LOG('NET', 'Removing password via RPC...'); 
+            await db.rpc('set_room_password', { p_room_id: state.currentRoomId, p_hash: null }); 
+            state.currentRoomData.has_password = false; 
+        }
+        else if (isChangingPass) { 
+            LOG('NET', 'Setting new password via RPC...'); 
+            const roomSalt = state.currentRoomData.salt; 
+            const accessHash = await sha256(newPass + roomSalt); 
+            await db.rpc('set_room_password', { p_room_id: state.currentRoomId, p_hash: accessHash }); 
+            state.currentRoomData.has_password = true; 
+        }
+        
         const { data: updatedRoom } = await db.from('rooms').select('*').eq('id', state.currentRoomId).single();
         state.currentRoomData = updatedRoom;
         
@@ -1263,6 +1383,7 @@ export function initHRNchat(customConfig = {}) {
 
     window.deleteRoom = async () => {
         if (!state.currentRoomId) return;
+        LOG('NET', `Deleting room ${state.currentRoomId}`);
         window.setLoading(true, "Deleting...");
         const { error } = await db.from('rooms').delete().eq('id', state.currentRoomId);
         if (error) { window.toast("Delete failed."); window.setLoading(false); return; }
@@ -1278,6 +1399,7 @@ export function initHRNchat(customConfig = {}) {
     window.openVault = async (id, n, rawPassword, roomSalt, cachedData = null) => {
         if (!state.user) return window.toast("Please log in.");
         if (state.isCapacityBlocked) return;
+        LOG('UI', `Opening Vault (Room) - ID: ${id}, Name: ${n}`);
         window.setLoading(true, "Opening chat...");
         state.currentRoomPassword = rawPassword;
         if (state.chatChannel) state.chatChannel.unsubscribe();
@@ -1293,6 +1415,7 @@ export function initHRNchat(customConfig = {}) {
         if (!roomData || !roomData.allowed_users) { roomData = await localDB.get('rooms', id); }
         if (!state.isOfflineMode) {
             try {
+                LOG('NET', `Fetching room data for ${id}...`);
                 const { data: netRoom } = await db.from('rooms').select('*').eq('id', id).single();
                 if (netRoom && netRoom.id) { roomData = netRoom; await localDB.put('rooms', roomData); }
             } catch (e) {}
@@ -1316,14 +1439,18 @@ export function initHRNchat(customConfig = {}) {
         else editBtn.style.display = 'none';
         
         const keySource = rawPassword ? (rawPassword + id) : id;
+        LOG('CRYPTO', 'Deriving key for vault...');
         await deriveKey(keySource, roomData?.salt, id);
+        
         let finalMessages = [];
         if (!state.isOfflineMode) {
             try {
+                LOG('NET', 'Fetching initial messages...');
                 const { data } = await db.from('messages').select('*').eq('room_id', id).order('created_at', { ascending: false }).limit(CONFIG.maxMessages);
                 if (data && data.length > 0) {
                     data.reverse();
                     try {
+                        LOG('CRYPTO', 'Decrypting initial batch...');
                         const res = await workerExec('decryptHistory', { messages: data, keyId: id });
                         const validMsgs = res.results.filter(m => !m.error);
                         const messagesWithRoomId = validMsgs.map(m => ({ ...m, room_id: id }));
@@ -1362,18 +1489,23 @@ export function initHRNchat(customConfig = {}) {
         const v = $('chat-input').value.trim();
         if (!v) return;
         if (v.length > CONFIG.maxMessageLength) { return window.toast(`Message too long (max ${CONFIG.maxMessageLength} chars).`); }
+        
+        LOG('UI', `Sending message: "${v}"`);
         state.processingAction = true;
         $('chat-input').value = '';
         state.lastMessageTime = Date.now();
         try {
             const enc = await encryptMessage(v, state.currentRoomId);
+            LOG('NET', 'Inserting message into DB...');
             const { data, error } = await db.from('messages').insert([{ room_id: state.currentRoomId, user_id: state.user.id, user_name: state.user.user_metadata?.full_name, content: enc }]).select().single();
             if (error) window.toast("Failed to send.");
+            else LOG('NET', 'Message inserted successfully.');
         } catch (err) { window.toast("Send failed."); }
         state.processingAction = false;
     };
 
     window.leaveChat = async () => {
+        LOG('UI', 'Leaving chat.');
         window.setLoading(true, "Leaving...");
         if (state.chatChannel) state.chatChannel.unsubscribe(); state.chatChannel = null;
         state.currentRoomId = null;
@@ -1395,6 +1527,7 @@ export function initHRNchat(customConfig = {}) {
         const em = $('l-email').value, p = $('l-pass').value;
         if (!em || !p) { window.toast("Missing fields."); state.processingAction = false; return; }
         window.setLoading(true, "Signing In...");
+        LOG('NET', `Attempting login for ${em}`);
         if (state.isOfflineMode) {
             const knownUser = await localDB.get('known_users', em);
             if (knownUser && knownUser.metadata) {
@@ -1408,6 +1541,7 @@ export function initHRNchat(customConfig = {}) {
         }
         const { error } = await db.auth.signInWithPassword({ email: em, password: p });
         if (error) {
+            LOG('WARN', 'Online login failed, checking offline cache.');
             const knownUser = await localDB.get('known_users', em);
             if (knownUser && knownUser.metadata) {
                 const hashInput = await sha256(p + em);
@@ -1419,6 +1553,7 @@ export function initHRNchat(customConfig = {}) {
             }
             window.toast("Invalid credentials."); window.setLoading(false); state.processingAction = false;
         } else {
+            LOG('NET', 'Login successful.');
             localStorage.setItem('hrn_auth_email', em);
             localStorage.setItem('hrn_auth_pass', p);
             const { data: { user } } = await db.auth.getUser();
@@ -1440,6 +1575,7 @@ export function initHRNchat(customConfig = {}) {
         const avatarUrl = customAvatar || state.selectedAvatar;
         if (!n || !em || p.length < 8) { window.toast("Invalid input."); state.processingAction = false; return; }
         window.setLoading(true, "Sending Code...");
+        LOG('NET', `Sending verification code to ${em}`);
         try {
             const [r, err] = await safeAwait(fetch(CONFIG.mailApi, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "send", email: em }) }));
             if (err) throw err;
@@ -1470,6 +1606,7 @@ export function initHRNchat(customConfig = {}) {
         const code = $('v-code').value, temp = JSON.parse(sessionStorage.getItem('temp_reg'));
         if (!temp) { window.toast("Session expired."); state.processingAction = false; return; }
         window.setLoading(true, "Verifying...");
+        LOG('NET', 'Verifying code...');
         try {
             const r = await fetch(CONFIG.mailApi, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "verify", email: temp.em, code: code }) });
             if (r.status === 429) { window.toast("Too many attempts."); state.processingAction = false; window.setLoading(false); return; }
@@ -1481,6 +1618,7 @@ export function initHRNchat(customConfig = {}) {
     };
 
     const finishReg = async (temp) => {
+        LOG('NET', 'Finishing registration with Supabase Auth.');
         const { error } = await db.auth.signUp({ email: temp.em, password: temp.p, options: { data: { full_name: temp.n, avatar_url: temp.avatar } } });
         if (error) { window.toast("Registration failed."); window.setLoading(false); }
         else { localStorage.setItem('hrn_auth_email', temp.em); localStorage.setItem('hrn_auth_pass', temp.p); window.nav('scr-lobby'); window.loadRooms(); window.setLoading(false); }
@@ -1517,6 +1655,7 @@ export function initHRNchat(customConfig = {}) {
             }
         }
         window.setLoading(true, "Creating...");
+        LOG('NET', 'Creating new room...');
         const roomSalt = generateSalt();
         const insertData = { name: n, avatar_url: avatarUrl, has_password: !!rawPass, is_visible: isVisible, salt: roomSalt, created_by: state.user.id, allowed_users: allowedUsers, is_direct: isDirect };
         const { data, error } = await db.from('rooms').insert([insertData]).select();
@@ -1539,16 +1678,18 @@ export function initHRNchat(customConfig = {}) {
         if (!e || !e.isTrusted) return;
         const inputPass = $('gate-pass').value;
         if (state.isOfflineMode) { window.openVault(state.pending.id, state.pending.name, inputPass, state.pending.salt, state.pending); return; }
+        LOG('NET', 'Checking room password...');
         const inputHash = await sha256(inputPass + state.pending.salt);
         window.setLoading(true, "Verifying...");
         const { data } = await db.rpc('verify_room_password', { p_room_id: state.pending.id, p_hash: inputHash });
         window.setLoading(false);
-        if (data === true) window.openVault(state.pending.id, state.pending.name, inputPass, state.pending.salt, state.pending);
-        else window.toast("Incorrect password.");
+        if (data === true) { LOG('NET', 'Password correct.'); window.openVault(state.pending.id, state.pending.name, inputPass, state.pending.salt, state.pending); }
+        else { LOG('WARN', 'Password incorrect.'); window.toast("Incorrect password."); }
     };
 
     window.handleLogout = async (e) => {
         if (!e || !e.isTrusted) return;
+        LOG('UI', 'Logging out...');
         window.setLoading(true, "Leaving...");
         await cleanupChannels();
         localStorage.removeItem('hrn_auth_email');
@@ -1566,6 +1707,7 @@ export function initHRNchat(customConfig = {}) {
     window.enterCreated = () => { if (!state.lastCreated) return; window.openVault(state.lastCreated.id, state.lastCreated.name, state.lastCreatedPass, state.lastCreated.salt, state.lastCreated); state.lastCreatedPass = null; };
 
     const { data: { subscription } } = db.auth.onAuthStateChange(async (ev, ses) => {
+        LOG('EVENT', `Auth State Changed: ${ev}`);
         if (state.isOfflineMode && !ses) return;
         state.user = ses?.user;
         if (state.user && !state.isOfflineMode) setupGlobalPresence(state.user.id);
@@ -1584,6 +1726,7 @@ export function initHRNchat(customConfig = {}) {
     window.nav = (id, direction = null) => {
         if (state.isNavigating) return;
         state.isNavigating = true;
+        LOG('UI', `Navigating to screen: ${id}`);
         requestAnimationFrame(() => {
             const current = document.querySelector('.screen.active');
             const next = $(id);
@@ -1622,6 +1765,7 @@ export function initHRNchat(customConfig = {}) {
     window.loadRooms = async () => {
         if (!state.user) return;
         const uid = state.user.id;
+        LOG('NET', 'Loading rooms for user: ' + uid);
         const processRooms = async (rooms) => {
             const processed = [];
             const promises = rooms.map(async (r) => {
@@ -1663,6 +1807,7 @@ export function initHRNchat(customConfig = {}) {
     };
 
     window.joinAttempt = async (id) => {
+        LOG('UI', `Join attempt for room: ${id}`);
         const meta = await localDB.get('rooms', id);
         const openLocal = async () => {
             if (meta && meta.id) {
@@ -1674,6 +1819,7 @@ export function initHRNchat(customConfig = {}) {
         if (state.isOfflineMode) { await openLocal(); return; }
         window.setLoading(true, "Accessing...");
         try {
+            LOG('NET', `Checking access for room ${id} via RPC...`);
             const { data: canAccess, error: rpcError } = await db.rpc('can_access_room', { p_room_id: id });
             if (rpcError) throw rpcError;
             if (!canAccess) throw new Error("Access denied");
@@ -1696,6 +1842,7 @@ export function initHRNchat(customConfig = {}) {
         if (!state.user) return window.toast("Please log in.");
         const id = $('join-id').value.trim();
         if (!id) return;
+        LOG('UI', `Joining private room: ${id}`);
         if (state.isOfflineMode) { const meta = await localDB.get('rooms', id); if (meta) window.joinAttempt(id); else window.toast("Connection required."); return; }
         window.setLoading(true, "Checking...");
         try {
@@ -1713,13 +1860,16 @@ export function initHRNchat(customConfig = {}) {
     };
 
     const init = async () => {
+        LOG('APP', 'App Initializing...');
         await localDB.init();
         monitorConnection();
         const hasMaster = await checkMaster();
         if (hasMaster) {
+            LOG('EVENT', 'Master tab already exists. Becoming slave.');
             state.isMasterTab = false;
             $('block-overlay').classList.add('active');
         } else {
+            LOG('EVENT', 'No master found. Claiming master.');
             state.isMasterTab = true;
             tabChannel.postMessage({ type: 'CLAIM_MASTER', id: state.tabId });
             if (navigator.onLine) setupGlobalPresence(null);
@@ -1729,6 +1879,7 @@ export function initHRNchat(customConfig = {}) {
         if (!navigator.onLine) setAppMode(true);
         if (storedEmail && storedPass) {
             if (state.isOfflineMode) {
+                LOG('APP', 'Offline mode detected with stored credentials. Trying local login.');
                 const knownUser = await localDB.get('known_users', storedEmail);
                 if (knownUser && knownUser.metadata) {
                     const hashInput = await sha256(storedPass + storedEmail);
@@ -1740,6 +1891,7 @@ export function initHRNchat(customConfig = {}) {
             } else {
                 window.setLoading(true, "Auto-logging in...");
                 $('l-email').value = storedEmail; $('l-pass').value = storedPass;
+                LOG('NET', 'Attempting auto-login with stored credentials.');
                 const { error } = await db.auth.signInWithPassword({ email: storedEmail, password: storedPass });
                 window.setLoading(false);
                 if (!error) {
@@ -1750,6 +1902,7 @@ export function initHRNchat(customConfig = {}) {
                     await localDB.put('known_users', { id: storedEmail, pass_hash: hashInput, email: storedEmail, metadata: user.user_metadata, userId: user.id });
                     window.nav('scr-lobby'); window.loadRooms();
                 } else {
+                    LOG('WARN', 'Auto-login failed. Trying offline fallback.');
                     const knownUser = await localDB.get('known_users', storedEmail);
                     if (knownUser && knownUser.metadata) {
                         const hashInput = await sha256(storedPass + storedEmail);
