@@ -1,7 +1,7 @@
 /* 
  *  © 2026 
  *  GitHub: https://github.com/HyperRushNet/chat-app
- *  Version: 1.0.7
+ *  Version: 1.0.8
  *  assets/logic.js 
  *  MIT License
  */
@@ -325,10 +325,13 @@ export function initHRNchat(customConfig = {}) {
 
     const cacheAvatar = async (profile) => {
         if (!profile || !profile.avatar_url) return profile;
+        
+        // Skip proxy for base64/data URLs
         if (profile.avatar_url.startsWith('data:')) {
             profile.cached_avatar = profile.avatar_url;
             return profile;
         }
+
         try {
             const response = await fetch(CONFIG.proxyUrl + profile.avatar_url);
             if (!response.ok) throw new Error("Invalid image response");
@@ -362,11 +365,16 @@ export function initHRNchat(customConfig = {}) {
                         const newProfileData = { ...serverProfile };
                         const urlChanged = !profile || profile.avatar_url !== serverProfile.avatar_url;
                         const needsImageCache = urlChanged || !profile.cached_avatar;
+                        
+                        // If we have a cached avatar locally and the URL hasn't changed, keep it to prevent flickering
+                        if (!needsImageCache && profile.cached_avatar) {
+                            newProfileData.cached_avatar = profile.cached_avatar;
+                        }
+
                         if (needsImageCache && serverProfile.avatar_url) {
                             await cacheAvatar(newProfileData);
                             profile = await localDB.get('profiles', userId);
                         } else {
-                            if (profile?.cached_avatar) newProfileData.cached_avatar = profile.cached_avatar;
                             await localDB.put('profiles', newProfileData);
                             profile = newProfileData;
                         }
@@ -381,8 +389,10 @@ export function initHRNchat(customConfig = {}) {
     const resolveRoomDisplay = async (room) => {
         if (!room) return { name: 'Chat', avatar: null };
         
+        // Group Chat Logic
         if (!room.is_direct) return { name: room.name, avatar: room.avatar_url };
         
+        // Direct Message Logic
         const myId = state.user?.id;
         if (!myId) return { name: 'Direct Message', avatar: null };
         
