@@ -432,12 +432,18 @@ export function initHRNchat(customConfig = {}) {
 
     const resolveRoomDisplay = async (room) => {
         if (!room) return { name: 'Chat', avatar: null };
+        
+        // --- DEBUG: Log wat we binnenkrijgen ---
+        LOG('UI', `Resolving display for room ${room.id}. Allowed Users:`, room.allowed_users);
+        // ---------------------------------------
+
         if (!room.is_direct) return { name: room.name, avatar: room.avatar_url };
         
         const myId = state.user?.id;
         if (!myId) return { name: 'Direct Message', avatar: null };
         
         if (!room.allowed_users || room.allowed_users.length === 0) {
+            LOG('WARN', `resolveRoomDisplay: allowed_users is leeg of undefined! Room data:`, room);
             return { name: 'Direct Message', avatar: null };
         }
         
