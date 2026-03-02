@@ -433,22 +433,38 @@ export function initHRNchat(customConfig = {}) {
     const resolveRoomDisplay = async (room) => {
         if (!room) return { name: 'Chat', avatar: null };
         
-        // --- DEBUG: Log wat we binnenkrijgen ---
-        LOG('UI', `Resolving display for room ${room.id}. Allowed Users:`, room.allowed_users);
-        // ---------------------------------------
+        // LOG 1: Check de kamer ID en is_direct status
+        LOG('UI', `Resolving display for room ${room.id}. is_direct: ${room.is_direct}. Allowed Users:`, room.allowed_users);
 
-        if (!room.is_direct) return { name: room.name, avatar: room.avatar_url };
+        if (!room.is_direct) {
+            LOG('UI', 'Room is NOT direct (Group Chat logic). Returning default room name.');
+            return { name: room.name, avatar: room.avatar_url };
+        }
         
         const myId = state.user?.id;
-        if (!myId) return { name: 'Direct Message', avatar: null };
         
-        if (!room.allowed_users || room.allowed_users.length === 0) {
-            LOG('WARN', `resolveRoomDisplay: allowed_users is leeg of undefined! Room data:`, room);
+        // LOG 2: Check of hij jouw ID kent
+        LOG('UI', `Checking myId: ${myId}`);
+
+        if (!myId) {
+            LOG('WARN', 'myId is null!');
             return { name: 'Direct Message', avatar: null };
+        }
+
+        if (!room.allowed_users || room.allowed_users.length === 0) {
+             LOG('WARN', 'Allowed users array is empty.');
+             return { name: 'Direct Message', avatar: null };
         }
         
         const otherId = room.allowed_users.find(id => id !== myId);
-        if (!otherId) return { name: 'Direct Message', avatar: null };
+        
+        // LOG 3: Heeft hij de andere ID gevonden?
+        LOG('UI', `Found otherId: ${otherId}`);
+
+        if (!otherId) {
+            LOG('WARN', 'Could not find otherId in allowed_users. My ID might be missing from the list.');
+            return { name: 'Direct Message', avatar: null };
+        }
         
         const profile = await getProfile(otherId);
         return {
@@ -1663,8 +1679,12 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(true, "Creating...");
         LOG('NET', 'Creating new room...');
         const roomSalt = generateSalt();
-        const insertData = { name: n, avatar_url: avatarUrl, has_password: !!rawPass, is_visible: isVisible, salt: roomSalt, created_by: state.user.id, allowed_users: allowedUsers, is_direct: isDirect };
-        const { data, error } = await db.from('rooms').insert([insertData]).select();
+    // Voeg dit toe in window.handleCreate
+    const insertData = { name: n, avatar_url: avatarUrl, has_password: !!rawPass, is_visible: isVisible, salt: roomSalt, created_by: state.user.id, allowed_users: allowedUsers, is_direct: isDirect };
+    
+    LOG('NET', 'Inserting room data into DB:', insertData); // <--- DEZE REGEL TOEVOEGEN
+
+    const { data, error } = await db.from('rooms').insert([insertData]).select();
         if (error) { window.toast("Creation failed."); state.processingAction = false; window.setLoading(false); return; }
         if (data && data.length > 0) {
             const newRoom = data[0];
