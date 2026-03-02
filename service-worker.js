@@ -1,22 +1,22 @@
-const CACHE_NAME = "hrn-cache-v1.0.9011";
+const CACHE_NAME = "hrn-cache-v1.0.1000";
 
 const BASE_PATH = ""; // root van username.github.io
 
 const FILES_TO_CACHE = [
   "/",
-  "/index.html?v=90",
-  "/assets/logic.js?v=90",
-  "/assets/branding/logo.png?v=90",
+  "/index.html?v=6",
+  "/assets/logic.js?v=6",
+  "/assets/branding/logo.png?v=6",
   // Icons
-  "/assets/branding/app/icon-192x192-maskable.png?v=90",
-  "/assets/branding/app/icon-192x192-not-maskable.png?v=90",
-  "/assets/branding/app/icon-256x256-maskable.png?v=90",
-  "/assets/branding/app/icon-256x256-not-maskable.png?v=90",
-  "/assets/branding/app/icon-512x512-maskable.png?v=90",
-  "/assets/branding/app/icon-512x512-not-maskable.png?v=90"
+  "/assets/branding/app/icon-192x192-maskable.png?v=6",
+  "/assets/branding/app/icon-192x192-not-maskable.png?v=6",
+  "/assets/branding/app/icon-256x256-maskable.png?v=6",
+  "/assets/branding/app/icon-256x256-not-maskable.png?v=6",
+  "/assets/branding/app/icon-512x512-maskable.png?v=6",
+  "/assets/branding/app/icon-512x512-not-maskable.png?v=6"
 ];
 
-// Install
+// Install: cache only FILES_TO_CACHE
 self.addEventListener("install", (event) => {
   self.skipWaiting();
   event.waitUntil(
@@ -24,7 +24,7 @@ self.addEventListener("install", (event) => {
   );
 });
 
-// Activate
+// Activate: cleanup old caches
 self.addEventListener("activate", (event) => {
   self.clients.claim();
   event.waitUntil(
@@ -34,37 +34,22 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Fetch
+// Fetch: cache-first only for pre-cached files, otherwise network only
 self.addEventListener("fetch", (event) => {
   const request = event.request;
 
   // Navigatie → fallback index.html
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request).catch(() => caches.match("/index.html?v=90"))
+      fetch(request).catch(() => caches.match("/index.html?v=6"))
     );
     return;
   }
 
-  // Cache-first voor andere assets
+  // Alleen FILES_TO_CACHE gebruiken voor cache, geen dynamisch toevoegen
   event.respondWith(
     caches.match(request).then((cached) => {
-      if (cached) return cached;
-
-      return fetch(request)
-        .then((response) => {
-          // Dynamisch cachen
-          return caches.open(CACHE_NAME).then((cache) => {
-            cache.put(request, response.clone());
-            return response;
-          });
-        })
-        .catch(() => {
-          // fallback image voor offline icons/logo
-          if (request.destination === "image") {
-            return caches.match("/assets/branding/logo.png?v=90");
-          }
-        });
+      return cached || fetch(request);
     })
   );
 });
