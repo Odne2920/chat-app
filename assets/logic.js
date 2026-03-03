@@ -1,10 +1,3 @@
-/* 
- *  © 2026 
- *  GitHub: https://github.com/HyperRushNet/chat-app
- *  Version: 1.0.5
- *  assets/logic.js 
- *  MIT License
- */
 import {
     createClient
 } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
@@ -756,18 +749,12 @@ export function initHRNchat(customConfig = {}) {
         const storedEmail = localStorage.getItem('hrn_auth_email');
         const storedPass = localStorage.getItem('hrn_auth_pass');
         if (storedEmail && storedPass) {
-            const {
-                error
-            } = await db.auth.signInWithPassword({
+            const { error } = await db.auth.signInWithPassword({
                 email: storedEmail,
                 password: storedPass
             });
             if (!error) {
-                const {
-                    data: {
-                        user
-                    }
-                } = await db.auth.getUser();
+                const { data: { user } } = await db.auth.getUser();
                 state.user = user;
                 await localDB.put('known_users', {
                     id: user.id,
@@ -781,8 +768,16 @@ export function initHRNchat(customConfig = {}) {
                 window.toast("Back online.");
             } else {
                 window.setLoading(false);
-                window.toast("Login failed.");
-                window.nav('scr-login');
+                if (error.message.includes("Failed to fetch") || error.message.includes("Network")) {
+                    window.toast("Connection failed. Staying in offline mode.");
+                    setAppMode(true);
+                } else if (error.status === 400 || error.status === 401 || error.status === 403 || error.message.toLowerCase().includes("banned") || error.message.toLowerCase().includes("disabled")) {
+                    window.toast("Account disabled or banned.");
+                    window.handleLogout();
+                } else {
+                    window.toast("Session expired or invalid.");
+                    window.nav('scr-login');
+                }
             }
         } else {
             window.setLoading(false);
@@ -1482,7 +1477,21 @@ export function initHRNchat(customConfig = {}) {
         const container = $('chat-messages');
         const emptyState = $('chat-empty-state');
         const hasMessages = container.querySelector('.msg');
-        if (emptyState) emptyState.style.display = hasMessages ? 'none' : 'flex';
+        if (hasMessages) {
+            if (emptyState) emptyState.style.display = 'none';
+        } else {
+            if (!emptyState) {
+                container.insertAdjacentHTML('beforeend', `
+                    <div id="chat-empty-state" class="empty-state" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-mute);padding-bottom:60px">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                        <h3 style="margin-top:16px;font-weight:600">No Messages Yet</h3>
+                        <p style="font-size:12px;margin-top:4px;opacity:0.7">Start the conversation below.</p>
+                    </div>
+                `);
+            } else {
+                emptyState.style.display = 'flex';
+            }
+        }
     };
     const renderMsg = (m, prevMsg, isDirect, isOptimistic = false) => {
         if (!m) return "";
@@ -1959,7 +1968,13 @@ export function initHRNchat(customConfig = {}) {
         });
         if (error) {
             window.setLoading(false);
-            window.toast("Login failed. Maybe you are banned.");
+            if (error.message.includes("Invalid login credentials")) {
+                window.toast("Wrong email or password.");
+            } else if (error.status === 400 || error.status === 401 || error.status === 403 || error.message.toLowerCase().includes("banned") || error.message.toLowerCase().includes("disabled")) {
+                window.toast("Account disabled or banned.");
+            } else {
+                window.toast("Login failed.");
+            }
             state.processingAction = false;
         } else {
             localStorage.setItem('hrn_auth_email', em);
@@ -2395,7 +2410,14 @@ export function initHRNchat(customConfig = {}) {
             if (!name.toLowerCase().includes(q)) return false;
             return true;
         });
-        if (filtered.length === 0) list.innerHTML = "";
+        if (filtered.length === 0) {
+            list.innerHTML = `
+            <div class="empty-state" style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;margin-top:60px;color:var(--text-mute)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                <h3 style="margin-top:16px;font-weight:600">No Chats Found</h3>
+                <p style="font-size:12px;margin-top:4px;opacity:0.7">Create or join a group to get started.</p>
+            </div>`;
+        }
         else list.innerHTML = filtered.map(r => `<div class="room-card" onclick="window.joinAttempt('${r.id}')"><div class="chat-avatar" style="width:36px;height:36px;margin-right:10px;font-size:13px">${r.display_avatar ? `<img src="${r.display_avatar}">` : (r.display_name||'G').charAt(0)}</div><span class="room-name">${esc(r.display_name)}</span><span class="room-icon">${r.is_direct ? '<i data-lucide="user" style="width:14px;height:14px"></i>' : ''}${r.has_password ? '<i data-lucide="lock" style="width:14px;height:14px"></i>' : ''}</span></div>`).join('');
     };
     window.joinAttempt = async (id) => {
