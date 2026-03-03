@@ -744,8 +744,14 @@ export function initHRNchat(customConfig = {}) {
         state.isCapacityBlocked = false;
         const overlay = $('block-overlay');
         if (overlay) overlay.classList.remove('active');
-        setAppMode(false);
-        window.setLoading(true, "Connecting...");
+        const activeScreen = document.querySelector('.screen.active');
+        const isAuthScreen = ['scr-login', 'scr-register', 'scr-start', 'scr-verify'].includes(activeScreen?.id);
+        if (isAuthScreen) {
+            setAppMode(false);
+            window.setLoading(true, "Connecting...");
+        } else {
+            window.toast("Connecting...");
+        }
         const storedEmail = localStorage.getItem('hrn_auth_email');
         const storedPass = localStorage.getItem('hrn_auth_pass');
         if (storedEmail && storedPass) {
@@ -764,24 +770,40 @@ export function initHRNchat(customConfig = {}) {
                 if (state.user) setupGlobalPresence(state.user.id);
                 if (state.currentRoomId) attemptHardReconnect();
                 window.loadRooms();
-                window.setLoading(false);
+                if (isAuthScreen) window.setLoading(false);
                 window.toast("Back online.");
             } else {
-                window.setLoading(false);
+                if (isAuthScreen) window.setLoading(false);
                 if (error.message.includes("Failed to fetch") || error.message.includes("Network")) {
-                    window.toast("Connection failed. Staying in offline mode.");
+                    window.toast("Connection failed.");
                     setAppMode(true);
                 } else if (error.status === 400 || error.status === 401 || error.status === 403 || error.message.toLowerCase().includes("banned") || error.message.toLowerCase().includes("disabled")) {
                     window.toast("Account disabled or banned.");
-                    window.handleLogout();
+                    if (isAuthScreen) {
+                        window.nav('scr-start');
+                    } else {
+                        localStorage.removeItem('hrn_auth_email');
+                        localStorage.removeItem('hrn_auth_pass');
+                        state.user = null;
+                        setAppMode(true);
+                    }
                 } else {
                     window.toast("Session expired or invalid.");
-                    window.nav('scr-login');
+                    if (isAuthScreen) {
+                        window.nav('scr-login');
+                    } else {
+                        setAppMode(true);
+                    }
                 }
             }
         } else {
-            window.setLoading(false);
-            window.nav('scr-login');
+            if (isAuthScreen) {
+                window.setLoading(false);
+                window.nav('scr-login');
+            } else {
+                window.toast("No saved login found.");
+                setAppMode(true);
+            }
         }
     };
     window.stayOffline = () => {
@@ -1483,9 +1505,9 @@ export function initHRNchat(customConfig = {}) {
             if (!emptyState) {
                 container.insertAdjacentHTML('beforeend', `
                     <div id="chat-empty-state" class="empty-state" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-mute);padding-bottom:60px">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                        <h3 style="margin-top:16px;font-weight:600">No Messages Yet</h3>
-                        <p style="font-size:12px;margin-top:4px;opacity:0.7">Start the conversation below.</p>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                        <div class="empty-title">No Messages Yet</div>
+                        <div class="empty-subtitle">Start the conversation below.</div>
                     </div>
                 `);
             } else {
@@ -2412,10 +2434,10 @@ export function initHRNchat(customConfig = {}) {
         });
         if (filtered.length === 0) {
             list.innerHTML = `
-            <div class="empty-state" style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;margin-top:60px;color:var(--text-mute)">
-                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                <h3 style="margin-top:16px;font-weight:600">No Chats Found</h3>
-                <p style="font-size:12px;margin-top:4px;opacity:0.7">Create or join a group to get started.</p>
+            <div class="empty-state" style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;margin-top:40px;padding:0 20px">
+                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                <div class="empty-title">No Chats Found</div>
+                <div class="empty-subtitle">Create or join a group to get started.</div>
             </div>`;
         }
         else list.innerHTML = filtered.map(r => `<div class="room-card" onclick="window.joinAttempt('${r.id}')"><div class="chat-avatar" style="width:36px;height:36px;margin-right:10px;font-size:13px">${r.display_avatar ? `<img src="${r.display_avatar}">` : (r.display_name||'G').charAt(0)}</div><span class="room-name">${esc(r.display_name)}</span><span class="room-icon">${r.is_direct ? '<i data-lucide="user" style="width:14px;height:14px"></i>' : ''}${r.has_password ? '<i data-lucide="lock" style="width:14px;height:14px"></i>' : ''}</span></div>`).join('');
