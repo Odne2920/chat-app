@@ -1,6 +1,5 @@
 const CACHE_NAME = "hrn-cache-v1.0.01003";
 const FILES_TO_CACHE = [
-  "../",
   "../index.html?v=10",
   "./logic.js?v=10",
   "./branding/app/icon-192x192-maskable.png?v=10",
