@@ -15,16 +15,22 @@ export function initHRNchat(customConfig = {}) {
 		supabaseUrl: customConfig.supabaseUrl || "https://jnhsuniduzvhkpexorqk.supabase.co",
 		supabaseKey: customConfig.supabaseKey || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpuaHN1bmlkdXp2aGtwZXhvcnFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1NjAxMDYsImV4cCI6MjA4NzEzNjEwNn0.9I5bbqskCgksUaNWYlFFo0-6Odht28pOMdxTGZECahY",
 		mailApi: customConfig.mailApi || "https://vercel-serverless-hrn.vercel.app/api/mailAPI",
-		maxUsers: customConfig.maxUsers || 1,
+		maxUsers: customConfig.maxUsers || 150,
 		maxMessages: customConfig.maxMessages || 50,
 		historyLoadLimit: customConfig.historyLoadLimit || 20,
 		rateLimitMs: customConfig.rateLimitMs || 1000,
 		presenceHeartbeatMs: customConfig.presenceHeartbeatMs || 10000,
 		verificationCodeExpiry: customConfig.verificationCodeExpiry || 600,
-		maxMessageLength: customConfig.maxMessageLength || 2000,
+		maxMessageLength: customConfig.maxMessageLength || 10000,
 		proxyUrl: customConfig.proxyUrl || "https://vercel-serverless-hrn.vercel.app/api/CORSproxy.js?url="
 	};
-	const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
+	const AVATARS = [
+		'./assets/avatars/1.webp', 
+		'./assets/avatars/2.webp', 
+		'./assets/avatars/3.webp', 
+		'./assets/avatars/4.webp', 
+		'./assets/avatars/5.webp'
+	];
 	const DB_NAME = 'HRN_LOCAL_DB_2';
 	const DB_VERSION = 10000;
 	const state = {
