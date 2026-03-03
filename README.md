@@ -1,11 +1,21 @@
----
 
-![](https://raw.githubusercontent.com/hrn-chat/hrn-chat.github.io/refs/heads/1.0.5/assets/README-content/hrn-chat-banner.jpg)
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/hrn-chat/hrn-chat.github.io/refs/heads/1.0.5/assets/README-content/hrn-chat-banner.jpg" width="900"/>
+</p>
+
+---
+<p align="center">
+  <a href="https://hrn-chat.github.io/docs/deploy.html">
+    <img src="https://img.shields.io/badge/Guide-Deploy-111827?style=for-the-badge&logo=&logoColor=white" />
+  </a>
+</p>
 
 ---
 
 > [!IMPORTANT]
 > If you fork this project, consider giving it a star in the original repository!
+
 
 
 ## Features
@@ -28,4 +38,5 @@
 - Room passwords are checked without ever sending them to your device
 - Only one active tab at a time (prevents login confusion)
 - Designed to feel safe and predictable
+
 
