@@ -2219,54 +2219,7 @@ export function initHRNchat(customConfig = {}) {
         state.processingAction = false;
     };
 
-        // Helper functie: Afbeelding ophalen, downscalen en converteren naar Base64
-    const processAvatarUrl = async (url) => {
-        if (!url || url.startsWith('data:')) return url; // Alleen URL's verwerken
-        
-        try {
-            // Gebruik de proxy om CORS fouten te voorkomen
-            const response = await fetch(CONFIG.proxyUrl + url);
-            if (!response.ok) return url; // Fallback naar originele URL bij fout
-            
-            const blob = await response.blob();
-            
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const img = new Image();
-                    img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        let w = img.width, h = img.height;
-                        const max = 250; // Max grootte
-                        
-                        // Bereken verhoudingen
-                        if (w > h) {
-                            if (w > max) { h *= max / w; w = max; }
-                        } else {
-                            if (h > max) { w *= max / h; h = max; }
-                        }
-                        
-                        canvas.width = w;
-                        canvas.height = h;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0, w, h);
-                        
-                        // Zet om naar base64 string
-                        resolve(canvas.toDataURL('image/jpeg', 0.85));
-                    };
-                    img.onerror = () => resolve(url); // Fallback
-                    img.src = e.target.result;
-                };
-                reader.onerror = () => resolve(url); // Fallback
-                reader.readAsDataURL(blob);
-            });
-        } catch (err) {
-            console.warn("Avatar processing failed", err);
-            return url;
-        }
-    };
-
-    
+      
     
     const finishReg = async (temp) => {
         const {
@@ -2444,7 +2397,7 @@ export function initHRNchat(customConfig = {}) {
         window.toast("ID copied.");
     };
 
-        // Helper functie: Afbeelding ophalen, downscalen en converteren naar Base64
+        // x Helper functie: Afbeelding ophalen, downscalen en converteren naar Base64
     const processAvatarUrl = async (url) => {
         if (!url || url.startsWith('data:')) return url; // Alleen URL's verwerken
         
