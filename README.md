@@ -14,7 +14,7 @@
 - Public open rooms + private password-protected rooms
 - Direct messages (1-on-1)
 - Edit or delete your messages (within 15 minutes)
-- See who is online right now (per room + total)
+- See who is online right now (per room & total)
 - Message copying with one tap
 - Beautiful automatic date headers (Today • Yesterday • Monday • 15 Feb 2026)
 - Fully readable offline (previously received messages)
