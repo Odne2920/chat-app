@@ -458,40 +458,46 @@ export function initHRNchat(customConfig = {}) {
 		}
 		return profile;
 	};
-	const resolveRoomDisplay = async (room) => {
-		if (!room) return {
-			name: 'Chat',
-			avatar: null
-		};
-		if (!room.is_direct) return {
-			name: room.name,
-			avatar: room.avatar_url
-		};
-		const myId = state.user?.id;
-		if (!myId) return {
-			name: 'Direct Message',
-			avatar: null
-		};
-		if (!room.allowed_users || room.allowed_users.length === 0) return {
-			name: 'Direct Message',
-			avatar: null
-		};
-		const otherIds = room.allowed_users.filter(id => id !== myId && id !== '*');
-		const otherId = otherIds.length > 0 ? otherIds[0] : null;
-		if (!otherId) return {
-			name: 'Direct Message',
-			avatar: null
-		};
-		const profile = await getProfile(otherId);
-		if (!profile) return {
-			name: 'Unknown User',
-			avatar: null
-		};
-		return {
-			name: profile.full_name || 'User',
-			avatar: profile.cached_avatar || profile.avatar_url
-		};
-	};
+    const resolveRoomDisplay = async (room) => {
+        if (!room) return {
+            name: 'Chat',
+            avatar: null
+        };
+        if (!room.is_direct) {
+            // FIX: If offline, don't return remote URL unless it's already base64 (data:), return null to show letter
+            const avatar = (!state.isOfflineMode || (room.avatar_url && room.avatar_url.startsWith('data:'))) ? room.avatar_url : null;
+            return {
+                name: room.name,
+                avatar: avatar
+            };
+        }
+        const myId = state.user?.id;
+        if (!myId) return {
+            name: 'Direct Message',
+            avatar: null
+        };
+        if (!room.allowed_users || room.allowed_users.length === 0) return {
+            name: 'Direct Message',
+            avatar: null
+        };
+        const otherIds = room.allowed_users.filter(id => id !== myId && id !== '*');
+        const otherId = otherIds.length > 0 ? otherIds[0] : null;
+        if (!otherId) return {
+            name: 'Direct Message',
+            avatar: null
+        };
+        const profile = await getProfile(otherId);
+        if (!profile) return {
+            name: 'Unknown User',
+            avatar: null
+        };
+        // FIX: Prefer cached avatar. If offline and no cache, return null (letter fallback) instead of broken URL
+        const avatar = profile.cached_avatar || (!state.isOfflineMode ? profile.avatar_url : null);
+        return {
+            name: profile.full_name || 'User',
+            avatar: avatar
+        };
+    };
 	const workerCode = `
         self.onmessage = async (e) => { 
             const { id, type, payload } = e.data; 
@@ -806,34 +812,41 @@ export function initHRNchat(customConfig = {}) {
 			window.toast("Connected.");
 		}
 	};
-	window.goOnline = async () => {
-		stopInternetCheck();
-		state.isCapacityBlocked = false;
-		const overlay = $('block-overlay');
-		if (overlay) overlay.classList.remove('active');
-		const activeScreen = document.querySelector('.screen.active');
-		const isAuthScreen = ['scr-login', 'scr-register', 'scr-start', 'scr-verify'].includes(activeScreen?.id);
-		if (isAuthScreen) {
-			setAppMode(false);
-			window.setLoading(true, "Connecting...");
-		} else {
-			window.toast("Reconnecting...");
-		}
-		const storedEmail = localStorage.getItem('hrn_auth_email');
-		const storedPass = localStorage.getItem('hrn_auth_pass');
-		if (storedEmail && storedPass) {
-			await attemptLogin(storedEmail, storedPass);
-			if (isAuthScreen) window.setLoading(false);
-		} else {
-			if (isAuthScreen) {
-				window.setLoading(false);
-				window.nav('scr-login');
-			} else {
-				window.toast("No saved login found.");
-				setAppMode(true);
-			}
-		}
-	};
+    window.goOnline = async () => {
+        stopInternetCheck();
+        state.isCapacityBlocked = false;
+        const overlay = $('block-overlay');
+        if (overlay) overlay.classList.remove('active');
+        const activeScreen = document.querySelector('.screen.active');
+        const isAuthScreen = ['scr-login', 'scr-register', 'scr-start', 'scr-verify'].includes(activeScreen?.id);
+        if (isAuthScreen) {
+            setAppMode(false);
+            window.setLoading(true, "Connecting...");
+        } else {
+            window.toast("Reconnecting...");
+        }
+        const storedEmail = localStorage.getItem('hrn_auth_email');
+        const storedPass = localStorage.getItem('hrn_auth_pass');
+        if (storedEmail && storedPass) {
+            await attemptLogin(storedEmail, storedPass);
+            if (isAuthScreen) window.setLoading(false);
+        } else {
+            // FIX: If user is already logged in (has state.user), stay in current mode instead of forcing login screen
+            if (state.user) {
+                window.toast("Cannot reconnect: Credentials not found locally. Staying offline.");
+                setAppMode(true);
+            } else {
+                if (isAuthScreen) {
+                    window.setLoading(false);
+                    window.nav('scr-login');
+                } else {
+                    window.toast("No saved login found.");
+                    setAppMode(true);
+                    window.nav('scr-login');
+                }
+            }
+        }
+    };
 	window.stayOffline = () => {
 		const overlay = $('block-overlay');
 		if (overlay) overlay.classList.remove('active');
