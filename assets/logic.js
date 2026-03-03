@@ -253,14 +253,6 @@ export function initHRNchat(customConfig = {}) {
         p.textContent = t;
         return p.innerHTML;
     };
-    
-    // New helper function to append cache parameter
-    const addCacheParam = (url) => {
-        if (!url || url.startsWith('data:')) return url;
-        const separator = url.includes('?') ? '&' : '?';
-        return `${url}${separator}cache=1-hrn`;
-    };
-
     const truncateText = (text, maxLength = 20) => !text ? "" : text.length > maxLength ? text.substring(0, maxLength) + "..." : text;
     const $ = id => document.getElementById(id);
     const getTimeFromDate = (d) => new Date(d).toLocaleTimeString('en-GB', {
@@ -407,8 +399,7 @@ export function initHRNchat(customConfig = {}) {
             return profile;
         }
         try {
-            // Apply cache param before fetching
-            const response = await fetch(CONFIG.proxyUrl + addCacheParam(profile.avatar_url));
+            const response = await fetch(CONFIG.proxyUrl + profile.avatar_url);
             if (!response.ok) throw new Error("Invalid image response");
             const blob = await response.blob();
             return new Promise((resolve) => {
@@ -486,8 +477,7 @@ export function initHRNchat(customConfig = {}) {
             avatar: null
         };
         if (!room.is_direct) {
-            // Apply cache param to group avatar
-            const avatar = (!state.isOfflineMode || (room.avatar_url && room.avatar_url.startsWith('data:'))) ? addCacheParam(room.avatar_url) : null;
+            const avatar = (!state.isOfflineMode || (room.avatar_url && room.avatar_url.startsWith('data:'))) ? room.avatar_url : null;
             return {
                 name: room.name,
                 avatar: avatar
@@ -513,8 +503,7 @@ export function initHRNchat(customConfig = {}) {
             name: 'Unknown User',
             avatar: null
         };
-        // Apply cache param to profile avatar if not cached locally
-        const avatar = profile.cached_avatar || (!state.isOfflineMode ? addCacheParam(profile.avatar_url) : null);
+        const avatar = profile.cached_avatar || (!state.isOfflineMode ? profile.avatar_url : null);
         return {
             name: profile.full_name || 'User',
             avatar: avatar
@@ -1301,7 +1290,7 @@ export function initHRNchat(customConfig = {}) {
     };
     const updateCarouselPreview = () => {
         const preview = $('avatar-preview-el');
-        if (state.selectedAvatar) preview.innerHTML = `<img src="${addCacheParam(state.selectedAvatar)}">`;
+        if (state.selectedAvatar) preview.innerHTML = `<img src="${state.selectedAvatar}">`;
     };
     window.carouselNav = (direction) => {
         let index = AVATARS.indexOf(state.selectedAvatar);
@@ -1453,7 +1442,7 @@ export function initHRNchat(customConfig = {}) {
             return;
         }
         $('picker-count').innerText = displayUsers.length;
-        container.innerHTML = displayUsers.map(u => `<div class="picker-user-card" style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><div style="width:28px;height:28px;border-radius:50%;background:#f2f2f7;overflow:hidden;margin-right:8px;display:flex;align-items:center;justify-content:center;color:var(--accent);font-weight:800;font-size:11px">${u.avatar ? `<img src="${addCacheParam(u.avatar)}">` : u.name.charAt(0)}</div><div style="flex:1;min-width:0"><div style="font-weight:700;font-size:12px">${esc(u.name)} ${u.id === state.user.id ? '<span style="color:var(--text-mute);font-weight:500">(You)</span>' : ''}</div><div style="font-size:9px;color:var(--text-mute);font-family:monospace">${u.id}</div></div><button class="picker-remove-btn" style="background:transparent;border:none;color:var(--danger);cursor:pointer;padding:8px" onclick="window.removePickerUser('${u.id}')"><i data-lucide="x" style="width:14px;height:14px"></i></button></div>`).join('');
+        container.innerHTML = displayUsers.map(u => `<div class="picker-user-card" style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><div style="width:28px;height:28px;border-radius:50%;background:#f2f2f7;overflow:hidden;margin-right:8px;display:flex;align-items:center;justify-content:center;color:var(--accent);font-weight:800;font-size:11px">${u.avatar ? `<img src="${u.avatar}">` : u.name.charAt(0)}</div><div style="flex:1;min-width:0"><div style="font-weight:700;font-size:12px">${esc(u.name)} ${u.id === state.user.id ? '<span style="color:var(--text-mute);font-weight:500">(You)</span>' : ''}</div><div style="font-size:9px;color:var(--text-mute);font-family:monospace">${u.id}</div></div><button class="picker-remove-btn" style="background:transparent;border:none;color:var(--danger);cursor:pointer;padding:8px" onclick="window.removePickerUser('${u.id}')"><i data-lucide="x" style="width:14px;height:14px"></i></button></div>`).join('');
     };
     window.removePickerUser = (id) => {
         state.selectedAllowedUsers = state.selectedAllowedUsers.filter(u => u.id !== id);
@@ -1568,7 +1557,7 @@ export function initHRNchat(customConfig = {}) {
         $('acc-page-type').innerText = "Full Account";
         $('acc-page-id').innerText = state.user.id;
         const avPrev = $('acc-page-avatar');
-        if (avatar) avPrev.innerHTML = `<img src="${addCacheParam(avatar)}">`;
+        if (avatar) avPrev.innerHTML = `<img src="${avatar}">`;
         else avPrev.innerText = name.charAt(0);
         $('acc-email-wrapper').style.display = 'block';
         $('acc-page-email').innerText = state.user.email || "Not set";
@@ -1600,7 +1589,7 @@ export function initHRNchat(customConfig = {}) {
         }
         const profile = await getProfile(state.user.id);
         if (profile && profile.cached_avatar) avatar = profile.cached_avatar;
-        if (avatar) btn.innerHTML = `<img src="${addCacheParam(avatar)}">`;
+        if (avatar) btn.innerHTML = `<img src="${avatar}">`;
         else btn.innerText = (name || "U").charAt(0);
     };
     const getDateLabel = (d) => {
@@ -1723,7 +1712,7 @@ export function initHRNchat(customConfig = {}) {
         const display = await resolveRoomDisplay(room);
         $('info-name').innerText = display.name;
         const avEl = $('info-avatar');
-        if (display.avatar) avEl.innerHTML = `<img src="${display.avatar}">`; // Already handled by resolveRoomDisplay
+        if (display.avatar) avEl.innerHTML = `<img src="${display.avatar}">`;
         else avEl.innerText = display.name.charAt(0);
         if (room.is_direct) {
             $('info-type').innerText = "Direct Message";
@@ -1936,7 +1925,7 @@ export function initHRNchat(customConfig = {}) {
         state.currentRoomDisplay = await resolveRoomDisplay(roomData);
         $('chat-title').innerText = state.currentRoomDisplay.name;
         const avEl = $('chat-avatar-display');
-        if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`; // Already handled
+        if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`;
         else avEl.innerText = state.currentRoomDisplay.name.charAt(0).toUpperCase();
         const editBtn = $('info-edit-btn');
         if (!isDirect && roomData?.created_by === state.user.id) editBtn.style.display = 'flex';
@@ -2229,6 +2218,56 @@ export function initHRNchat(customConfig = {}) {
         }
         state.processingAction = false;
     };
+
+        // Helper functie: Afbeelding ophalen, downscalen en converteren naar Base64
+    const processAvatarUrl = async (url) => {
+        if (!url || url.startsWith('data:')) return url; // Alleen URL's verwerken
+        
+        try {
+            // Gebruik de proxy om CORS fouten te voorkomen
+            const response = await fetch(CONFIG.proxyUrl + url);
+            if (!response.ok) return url; // Fallback naar originele URL bij fout
+            
+            const blob = await response.blob();
+            
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        let w = img.width, h = img.height;
+                        const max = 250; // Max grootte
+                        
+                        // Bereken verhoudingen
+                        if (w > h) {
+                            if (w > max) { h *= max / w; w = max; }
+                        } else {
+                            if (h > max) { w *= max / h; h = max; }
+                        }
+                        
+                        canvas.width = w;
+                        canvas.height = h;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, w, h);
+                        
+                        // Zet om naar base64 string
+                        resolve(canvas.toDataURL('image/jpeg', 0.85));
+                    };
+                    img.onerror = () => resolve(url); // Fallback
+                    img.src = e.target.result;
+                };
+                reader.onerror = () => resolve(url); // Fallback
+                reader.readAsDataURL(blob);
+            });
+        } catch (err) {
+            console.warn("Avatar processing failed", err);
+            return url;
+        }
+    };
+
+    
+    
     const finishReg = async (temp) => {
         const {
             error
@@ -2262,6 +2301,7 @@ export function initHRNchat(customConfig = {}) {
             targetUser = null;
         let avatarUrl = null;
         let rawPass = null;
+        
         if (isDirect) {
             targetUser = $('c-target-user').value.trim();
             if (!targetUser) {
@@ -2284,15 +2324,27 @@ export function initHRNchat(customConfig = {}) {
             isVisible = true;
         } else {
             n = $('c-name').value.trim();
-            avatarUrl = $('c-avatar').value.trim() || null;
+            
+            // --- WIJZIGING: Avatar URL verwerken naar Base64 ---
+            const inputUrl = $('c-avatar').value.trim();
+            if (inputUrl) {
+                window.setLoading(true, "Processing image...");
+                avatarUrl = await processAvatarUrl(inputUrl);
+            } else {
+                avatarUrl = null;
+            }
+            // ------------------------------------------------
+            
             rawPass = $('c-pass').value;
             isVisible = $('c-visible').checked;
             if (!n) {
                 window.toast("Name required.");
                 state.processingAction = false;
+                window.setLoading(false);
                 return;
             }
         }
+        
         let allowedUsers = ['*'];
         if (isDirect) allowedUsers = [
             state.user.id,
@@ -2304,11 +2356,12 @@ export function initHRNchat(customConfig = {}) {
                 if (!allowedUsers.includes(state.user.id)) allowedUsers.push(state.user.id);
             }
         }
+        
         window.setLoading(true, "Creating...");
         const roomSalt = generateSalt();
         const insertData = {
             name: n,
-            avatar_url: avatarUrl,
+            avatar_url: avatarUrl, // Dit is nu de base64 string
             has_password: !!rawPass,
             is_visible: isVisible,
             salt: roomSalt,
@@ -2316,17 +2369,20 @@ export function initHRNchat(customConfig = {}) {
             allowed_users: allowedUsers,
             is_direct: isDirect
         };
+        
         const {
             data,
             error
         } = await db.from('rooms').insert(
             [insertData]).select();
+            
         if (error) {
             window.toast("Creation failed.");
             state.processingAction = false;
             window.setLoading(false);
             return;
         }
+        
         if (data && data.length > 0) {
             const newRoom = data[0];
             if (rawPass) {
@@ -2386,6 +2442,164 @@ export function initHRNchat(customConfig = {}) {
         if (!state.lastCreated) return;
         navigator.clipboard.writeText(state.lastCreated.id);
         window.toast("ID copied.");
+    };
+
+        // Helper functie: Afbeelding ophalen, downscalen en converteren naar Base64
+    const processAvatarUrl = async (url) => {
+        if (!url || url.startsWith('data:')) return url; // Alleen URL's verwerken
+        
+        try {
+            // Gebruik de proxy om CORS fouten te voorkomen
+            const response = await fetch(CONFIG.proxyUrl + url);
+            if (!response.ok) return url; // Fallback naar originele URL bij fout
+            
+            const blob = await response.blob();
+            
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        let w = img.width, h = img.height;
+                        const max = 250; // Max grootte
+                        
+                        // Bereken verhoudingen
+                        if (w > h) {
+                            if (w > max) { h *= max / w; w = max; }
+                        } else {
+                            if (h > max) { w *= max / h; h = max; }
+                        }
+                        
+                        canvas.width = w;
+                        canvas.height = h;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, w, h);
+                        
+                        // Zet om naar base64 string
+                        resolve(canvas.toDataURL('image/jpeg', 0.85));
+                    };
+                    img.onerror = () => resolve(url); // Fallback
+                    img.src = e.target.result;
+                };
+                reader.onerror = () => resolve(url); // Fallback
+                reader.readAsDataURL(blob);
+            });
+        } catch (err) {
+            console.warn("Avatar processing failed", err);
+            return url;
+        }
+    };
+
+    window.handleCreate = async (e) => {
+        if (!e || !e.isTrusted) return;
+        if (state.processingAction) return;
+        state.processingAction = true;
+        const isDirect = state.createType === 'direct';
+        let n, isVisible = true,
+            targetUser = null;
+        let avatarUrl = null;
+        let rawPass = null;
+        
+        if (isDirect) {
+            targetUser = $('c-target-user').value.trim();
+            if (!targetUser) {
+                window.toast("User ID required.");
+                state.processingAction = false;
+                return;
+            }
+            const {
+                data: profile,
+                error
+            } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', targetUser).single();
+            if (error || !profile) {
+                window.toast("User not found.");
+                state.processingAction = false;
+                return;
+            }
+            await localDB.put('profiles', profile);
+            state.profileCache[profile.id] = profile;
+            n = "Direct Message";
+            isVisible = true;
+        } else {
+            n = $('c-name').value.trim();
+            
+            // --- WIJZIGING: Avatar URL verwerken naar Base64 ---
+            const inputUrl = $('c-avatar').value.trim();
+            if (inputUrl) {
+                window.setLoading(true, "Processing image...");
+                avatarUrl = await processAvatarUrl(inputUrl);
+            } else {
+                avatarUrl = null;
+            }
+            // ------------------------------------------------
+            
+            rawPass = $('c-pass').value;
+            isVisible = $('c-visible').checked;
+            if (!n) {
+                window.toast("Name required.");
+                state.processingAction = false;
+                window.setLoading(false);
+                return;
+            }
+        }
+        
+        let allowedUsers = ['*'];
+        if (isDirect) allowedUsers = [
+            state.user.id,
+            targetUser
+        ];
+        else {
+            if (state.selectedAllowedUsers.length > 0) {
+                allowedUsers = state.selectedAllowedUsers.map(u => u.id);
+                if (!allowedUsers.includes(state.user.id)) allowedUsers.push(state.user.id);
+            }
+        }
+        
+        window.setLoading(true, "Creating...");
+        const roomSalt = generateSalt();
+        const insertData = {
+            name: n,
+            avatar_url: avatarUrl, // Dit is nu de base64 string
+            has_password: !!rawPass,
+            is_visible: isVisible,
+            salt: roomSalt,
+            created_by: state.user.id,
+            allowed_users: allowedUsers,
+            is_direct: isDirect
+        };
+        
+        const {
+            data,
+            error
+        } = await db.from('rooms').insert(
+            [insertData]).select();
+            
+        if (error) {
+            window.toast("Creation failed.");
+            state.processingAction = false;
+            window.setLoading(false);
+            return;
+        }
+        
+        if (data && data.length > 0) {
+            const newRoom = data[0];
+            if (rawPass) {
+                const accessHash = await sha256(rawPass + roomSalt);
+                await db.rpc('set_room_password', {
+                    p_room_id: newRoom.id,
+                    p_hash: accessHash
+                });
+            }
+            await localDB.put('rooms', newRoom);
+            state.lastCreated = newRoom;
+            state.lastCreatedPass = rawPass;
+            $('s-id').innerText = newRoom.id;
+            window.nav('scr-success');
+            state.selectedAllowedUsers = [];
+        }
+        state.processingAction = false;
+        window.setLoading(false);
     };
     window.enterCreated = () => {
         if (!state.lastCreated) return;
