@@ -1,4 +1,4 @@
-
+---
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/hrn-chat/hrn-chat.github.io/refs/heads/1.0.5/assets/README-content/hrn-chat-banner.jpg" width="900"/>
@@ -7,11 +7,10 @@
 ---
 <p align="center">
   <a href="https://hrn-chat.github.io/docs/deploy.html">
-    <img src="https://img.shields.io/badge/Deploy-Guide-111827?style=for-the-badge&logo=&logoColor=white" />
-  </a>
+    <img src="https://img.shields.io/badge/Deploy-Guide-111827?style=for-the-badge&logo=github&logoColor=white" />
+  </a><br style="line-height:1.5em;">
+  <img src="https://placehold.co/8000x10/6e6e6e/ffffff" />
 </p>
-
----
 
 > [!IMPORTANT]
 > If you fork this project, consider giving it a star in the original repository!
