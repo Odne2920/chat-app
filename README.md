@@ -7,7 +7,7 @@
 ---
 <p align="center">
   <a href="https://hrn-chat.github.io/docs/deploy.html">
-    <img src="https://img.shields.io/badge/Guide-Deploy-111827?style=for-the-badge&logo=&logoColor=white" />
+    <img src="https://img.shields.io/badge/Deploy-Guide-111827?style=for-the-badge&logo=&logoColor=white" />
   </a>
 </p>
 
