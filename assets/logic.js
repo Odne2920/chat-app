@@ -1797,6 +1797,17 @@ export function initHRNchat(customConfig = {}) {
 		else editBtn.style.display = 'none';
 		const keySource = rawPassword ? (rawPassword + id) : id;
 		await deriveKey(keySource, roomData?.salt, id);
+		let localMessages = await localDB.getRoomMessages(id);
+		let renderedHtml = '';
+		if (localMessages.length > 0) {
+			let prev = null;
+			localMessages.forEach(m => {
+				renderedHtml += renderMsg(m, prev, isDirect);
+				prev = m;
+			});
+			chatContainer.innerHTML = renderedHtml;
+			chatContainer.scrollTop = chatContainer.scrollHeight;
+		}
 		let finalMessages = [];
 		if (!state.isOfflineMode) {
 			try {
@@ -1824,7 +1835,6 @@ export function initHRNchat(customConfig = {}) {
 				}
 			} catch (e) {}
 		}
-		if (finalMessages.length === 0) finalMessages = await localDB.getRoomMessages(id);
 		window.nav('scr-chat');
 		if (finalMessages.length > 0) {
 			if (finalMessages.length > 0) state.oldestMessageTimestamp = finalMessages[0].created_at;
@@ -1917,7 +1927,7 @@ export function initHRNchat(customConfig = {}) {
 			return;
 		}
 		window.setLoading(true, "Signing In...");
-		if (state.isOfflineMode) {
+		if (!navigator.onLine) {
 			const knownUser = await localDB.get('known_users', em);
 			if (knownUser && knownUser.metadata) {
 				const hashInput = await sha256(p + em);
@@ -1927,15 +1937,16 @@ export function initHRNchat(customConfig = {}) {
 						email: knownUser.email,
 						user_metadata: knownUser.metadata
 					};
+					setAppMode(true);
 					window.nav('scr-lobby');
 					window.loadRooms();
 					window.setLoading(false);
 					state.processingAction = false;
-					window.toast("Logged in offline.");
+					window.toast("Offline login successful.");
 					return;
 				}
 			}
-			window.toast("Login failed.");
+			window.toast("No internet and no offline account found.");
 			window.setLoading(false);
 			state.processingAction = false;
 			return;
@@ -1947,26 +1958,8 @@ export function initHRNchat(customConfig = {}) {
 			password: p
 		});
 		if (error) {
-			const knownUser = await localDB.get('known_users', em);
-			if (knownUser && knownUser.metadata) {
-				const hashInput = await sha256(p + em);
-				if (knownUser.pass_hash && knownUser.pass_hash === hashInput) {
-					setAppMode(true);
-					state.user = {
-						id: knownUser.userId,
-						email: knownUser.email,
-						user_metadata: knownUser.metadata
-					};
-					window.nav('scr-lobby');
-					window.loadRooms();
-					window.setLoading(false);
-					state.processingAction = false;
-					window.toast("Offline mode.");
-					return;
-				}
-			}
-			window.toast("Invalid credentials.");
 			window.setLoading(false);
+			window.toast("Login failed. Please check your credentials.");
 			state.processingAction = false;
 		} else {
 			localStorage.setItem('hrn_auth_email', em);
@@ -2004,6 +1997,11 @@ export function initHRNchat(customConfig = {}) {
 		const avatarUrl = customAvatar || state.selectedAvatar;
 		if (!n || !em || p.length < 8) {
 			window.toast("Invalid input.");
+			state.processingAction = false;
+			return;
+		}
+		if (!navigator.onLine) {
+			window.toast("Internet connection required to register.");
 			state.processingAction = false;
 			return;
 		}
@@ -2378,6 +2376,10 @@ export function initHRNchat(customConfig = {}) {
 			await localDB.putAll('rooms', rooms);
 			state.allRooms = await processRooms(rooms);
 			await localDB.saveUserTree(uid, rooms);
+			window.filterRooms();
+		} else if (rooms && rooms.length === 0) {
+			await localDB.clear('rooms');
+			state.allRooms = [];
 			window.filterRooms();
 		}
 		window.setLoading(false);
