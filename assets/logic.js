@@ -25,10 +25,10 @@ export function initHRNchat(customConfig = {}) {
         proxyUrl: customConfig.proxyUrl || "https://vercel-serverless-hrn.vercel.app/api/CORSproxy.js?url="
     };
     const AVATARS = [
-        './assets/avatars/1.webp', 
-        './assets/avatars/2.webp', 
-        './assets/avatars/3.webp', 
-        './assets/avatars/4.webp', 
+        './assets/avatars/1.webp',
+        './assets/avatars/2.webp',
+        './assets/avatars/3.webp',
+        './assets/avatars/4.webp',
         './assets/avatars/5.webp'
     ];
     const DB_NAME = 'HRN_LOCAL_DB_2';
@@ -773,7 +773,7 @@ export function initHRNchat(customConfig = {}) {
         if (error) {
             if (error.message.includes("Failed to fetch") || error.message.includes("Network")) {
                 window.toast(`Connection lost. Retrying (${state.loginRetryCount})...`);
-                setTimeout(() => attemptLogin(email, pass), 2000); 
+                setTimeout(() => attemptLogin(email, pass), 2000);
             } else {
                 localStorage.removeItem('hrn_auth_email');
                 localStorage.removeItem('hrn_auth_pass');
@@ -781,7 +781,7 @@ export function initHRNchat(customConfig = {}) {
                 window.toast(error.message);
             }
         } else {
-            state.loginRetryCount = 0; 
+            state.loginRetryCount = 0;
             const {
                 data: {
                     user
@@ -1006,7 +1006,12 @@ export function initHRNchat(customConfig = {}) {
         if (state.internetCheckInterval) return;
         state.internetCheckInterval = setInterval(async () => {
             try {
-                const response = await fetch('./assets/internet-test-file.txt', { cache: 'no-store', headers: { 'Pragma': 'no-cache' } });
+                const response = await fetch('./assets/internet-test-file.txt', {
+                    cache: 'no-store',
+                    headers: {
+                        'Pragma': 'no-cache'
+                    }
+                });
                 if (response.ok) {
                     if (state.internetCheckInterval) clearInterval(state.internetCheckInterval);
                     state.internetCheckInterval = null;
@@ -2569,43 +2574,59 @@ export function initHRNchat(customConfig = {}) {
         if (hasMaster) {
             state.isMasterTab = false;
             $('block-overlay').classList.add('active');
-            // Slave tab logic stops here, no WS connection needed for slaves (handled by master logic/broadcast)
         } else {
             state.isMasterTab = true;
-            tabChannel.postMessage({ type: 'CLAIM_MASTER', id: state.tabId });
-            
-            // SUPER SMART CONNECTION LOGIC
-            // Check immediately if we are online
-            if (navigator.onLine) {
-                setAppMode(false); // We are online
-                
-                // 1. Connect Global Presence Immediately (counts users, etc.)
-                setupGlobalPresence(null); 
+            tabChannel.postMessage({
+                type: 'CLAIM_MASTER',
+                id: state.tabId
+            });
 
-                // 2. Handle Authentication
+
+            if (navigator.onLine) {
+                setAppMode(false);
+
+                setupGlobalPresence(null);
+
                 if (storedEmail && storedPass) {
                     window.setLoading(true, "Auto-logging in...");
-                    const { error } = await db.auth.signInWithPassword({ email: storedEmail, password: storedPass });
+                    const {
+                        error
+                    } = await db.auth.signInWithPassword({
+                        email: storedEmail,
+                        password: storedPass
+                    });
                     window.setLoading(false);
-                    
+
                     if (!error) {
-                        const { data: { user } } = await db.auth.getUser();
+                        const {
+                            data: {
+                                user
+                            }
+                        } = await db.auth.getUser();
                         state.user = user;
-                        // Login success triggers user-specific presence via onAuthStateChange or explicit call
-                        setupGlobalPresence(state.user.id); 
-                        
+                        setupGlobalPresence(state.user.id);
+
                         const hashInput = await sha256(storedPass + storedEmail);
-                        await localDB.put('known_users', { id: storedEmail, pass_hash: hashInput, email: storedEmail, metadata: user.user_metadata, userId: user.id });
-                        
+                        await localDB.put('known_users', {
+                            id: storedEmail,
+                            pass_hash: hashInput,
+                            email: storedEmail,
+                            metadata: user.user_metadata,
+                            userId: user.id
+                        });
+
                         window.nav('scr-lobby');
                         window.loadRooms();
                     } else {
-                        // Online login failed, try offline cache
                         const knownUser = await localDB.get('known_users', storedEmail);
                         const hashInput = await sha256(storedPass + storedEmail);
                         if (knownUser && knownUser.pass_hash === hashInput) {
-                            state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata };
-                            setAppMode(true); // Fallback to offline
+                            state.user = {
+                                id: knownUser.userId,
+                                email: knownUser.email,
+                                user_metadata: knownUser.metadata
+                            };
+                            setAppMode(true);
                             window.nav('scr-lobby');
                             window.loadRooms();
                             window.toast("Offline mode.");
@@ -2616,19 +2637,21 @@ export function initHRNchat(customConfig = {}) {
                         }
                     }
                 } else {
-                    // Online, but no credentials
                     window.nav('scr-start');
                 }
             } else {
-                // --- OFFLINE PATH ---
                 setAppMode(true);
-                startInternetCheck(); // Start polling for internet
+                startInternetCheck();
 
                 if (storedEmail && storedPass) {
                     const knownUser = await localDB.get('known_users', storedEmail);
                     const hashInput = await sha256(storedPass + storedEmail);
                     if (knownUser && knownUser.pass_hash === hashInput) {
-                        state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata };
+                        state.user = {
+                            id: knownUser.userId,
+                            email: knownUser.email,
+                            user_metadata: knownUser.metadata
+                        };
                         window.nav('scr-lobby');
                         window.loadRooms();
                         window.toast("Offline mode.");
