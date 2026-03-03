@@ -1,4 +1,4 @@
-/* 
+/*
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
  *  Version: 1.0.5
@@ -96,6 +96,7 @@ export function initHRNchat(customConfig = {}) {
 		isCapacityBlocked: false,
 		authListener: null,
 		loginRetryCount: 0,
+		internetCheckInterval: null,
 		ui: {
 			isOverlayOpen: false,
 			isContextOpen: false,
@@ -803,6 +804,7 @@ export function initHRNchat(customConfig = {}) {
 		}
 	};
 	window.goOnline = async () => {
+		stopInternetCheck();
 		state.isCapacityBlocked = false;
 		const overlay = $('block-overlay');
 		if (overlay) overlay.classList.remove('active');
@@ -1000,8 +1002,28 @@ export function initHRNchat(customConfig = {}) {
 			}
 		});
 	};
+	const startInternetCheck = () => {
+		if (state.internetCheckInterval) return;
+		state.internetCheckInterval = setInterval(async () => {
+			try {
+				const response = await fetch('./assets/internet-test-file.txt', { cache: 'no-store', headers: { 'Pragma': 'no-cache' } });
+				if (response.ok) {
+					if (state.internetCheckInterval) clearInterval(state.internetCheckInterval);
+					state.internetCheckInterval = null;
+					if (state.isOfflineMode) window.goOnline();
+				}
+			} catch (e) {}
+		}, 5000);
+	};
+	const stopInternetCheck = () => {
+		if (state.internetCheckInterval) {
+			clearInterval(state.internetCheckInterval);
+			state.internetCheckInterval = null;
+		}
+	};
 	const monitorConnection = () => {
 		const onlineHandler = () => {
+			stopInternetCheck();
 			if (state.isOfflineMode) {
 				window.goOnline();
 			} else {
@@ -1015,6 +1037,7 @@ export function initHRNchat(customConfig = {}) {
 			if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
 			if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
 			state.isReconnecting = false;
+			startInternetCheck();
 		};
 		window.addEventListener('online', onlineHandler);
 		window.addEventListener('offline', offlineHandler);
