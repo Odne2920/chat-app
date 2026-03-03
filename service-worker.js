@@ -1,46 +1,14 @@
 const CACHE_NAME = "hrn-cache-v1.0.01002";
 const FILES_TO_CACHE = [
-  "/",
-  "/index.html?v=8",
-  "/assets/logic.js?v=8",
-  "/assets/branding/logo.png?v=8",
-  "/assets/branding/app/icon-192x192-maskable.png?v=8",
-  "/assets/branding/app/icon-192x192-not-maskable.png?v=8",
-  "/assets/branding/app/icon-256x256-maskable.png?v=8",
-  "/assets/branding/app/icon-256x256-not-maskable.png?v=8",
-  "/assets/branding/app/icon-512x512-maskable.png?v=8",
-  "/assets/branding/app/icon-512x512-not-maskable.png?v=8"
+  "./",
+  "./index.html?v=8",
+  "./assets/logic.js?v=8",
+  "./assets/branding/logo.png?v=8",
+  "./assets/branding/app/icon-192x192-maskable.png?v=9",
+  "./assets/branding/app/icon-192x192-not-maskable.png?v=9",
+  "./assets/branding/app/icon-256x256-maskable.png?v=9",
+  "./assets/branding/app/icon-256x256-not-maskable.png?v=9",
+  "./assets/branding/app/icon-512x512-maskable.png?v=9",
+  "./assets/branding/app/icon-512x512-not-maskable.png?v=9"
 ];
-
-self.addEventListener("install", (event) => {
-  self.skipWaiting();
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) =>
-      cache.addAll(FILES_TO_CACHE).catch(() => {})
-    )
-  );
-});
-
-self.addEventListener("activate", (event) => {
-  self.clients.claim();
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.map((key) => key !== CACHE_NAME && caches.delete(key)))
-    )
-  );
-});
-
-self.addEventListener("fetch", (event) => {
-  const request = event.request;
-
-  if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request).catch(() => caches.match("/index.html?v=8"))
-    );
-    return;
-  }
-
-  event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request))
-  );
-});
+self.addEventListener("install",(e=>{self.skipWaiting(),e.waitUntil(caches.open(CACHE_NAME).then((e=>e.addAll(FILES_TO_CACHE).catch((()=>{})))))})),self.addEventListener("activate",(e=>{self.clients.claim(),e.waitUntil(caches.keys().then((e=>Promise.all(e.map((e=>e!==CACHE_NAME&&caches.delete(e)))))))})),self.addEventListener("fetch",(e=>{const t=e.request;"navigate"!==t.mode?e.respondWith(caches.match(t).then((e=>e||fetch(t)))):e.respondWith(fetch(t).catch((()=>caches.match("/index.html?v=8"))))}));
