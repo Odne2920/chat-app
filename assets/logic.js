@@ -1,7 +1,7 @@
 /*
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
- *  Version: 1.0.7 (Bugfix Release)
+ *  Version: 1.0.5
  *  assets/logic.js 
  *  MIT License
  *  GH: HyperRushNet & hrn-chat
@@ -421,10 +421,10 @@ export function initHRNchat(customConfig = {}) {
         if (state.isOfflineMode) return;
         const profiles = await localDB.getAll('profiles');
         if (!profiles || profiles.length === 0) return;
-        
+
         const promises = profiles.map(async (p) => {
             if (p.avatar_url && !p.avatar_url.startsWith('data:') && !p.cached_avatar) {
-                 return cacheAvatar(p);
+                return cacheAvatar(p);
             }
             return Promise.resolve();
         });
@@ -800,7 +800,7 @@ export function initHRNchat(customConfig = {}) {
                 return false;
             }
         }
-        
+
         state.loginRetryCount = 0;
         const {
             data: {
@@ -808,12 +808,11 @@ export function initHRNchat(customConfig = {}) {
             }
         } = await db.auth.getUser();
         state.user = user;
-        
-        // Cache own profile on login
-        if(user) {
-            const profileData = { 
-                id: user.id, 
-                full_name: user.user_metadata?.full_name, 
+
+        if (user) {
+            const profileData = {
+                id: user.id,
+                full_name: user.user_metadata?.full_name,
                 avatar_url: user.user_metadata?.avatar_url,
                 updated_at: new Date().toISOString()
             };
@@ -836,34 +835,30 @@ export function initHRNchat(customConfig = {}) {
         const overlay = $('block-overlay');
         if (overlay) overlay.classList.remove('active');
 
-        // Smart Logic: If user already exists in state, just try to reconnect services
         if (state.user) {
             window.toast("Reconnecting...");
             const storedEmail = localStorage.getItem('hrn_auth_email');
             const storedPass = localStorage.getItem('hrn_auth_pass');
-            
+
             if (storedEmail && storedPass) {
                 const success = await attemptLogin(storedEmail, storedPass);
                 if (success) {
                     setAppMode(false);
                     setupGlobalPresence(state.user.id);
                     if (state.currentRoomId) attemptHardReconnect();
-                    window.loadRooms(); // Sync data
+                    window.loadRooms();
                     window.toast("Connected.");
                 } else {
-                    // Login failed (maybe password changed), stay offline but keep session
                     window.toast("Reconnect failed. Staying offline.");
                     setAppMode(true);
                 }
             } else {
-                // No creds stored, assume offline session
                 window.toast("Credentials not found locally. Staying offline.");
                 setAppMode(true);
             }
             return;
         }
 
-        // Logic for when there is NO user in state (Fresh start or Login screen)
         const activeScreen = document.querySelector('.screen.active');
         const isAuthScreen = ['scr-login', 'scr-register', 'scr-start', 'scr-verify'].includes(activeScreen?.id);
 
@@ -883,7 +878,6 @@ export function initHRNchat(customConfig = {}) {
                 window.nav('scr-lobby');
                 window.loadRooms();
             } else {
-                // Login failed on auth screen -> stay on login
                 window.nav('scr-login');
             }
             if (isAuthScreen) window.setLoading(false);
@@ -2086,7 +2080,7 @@ export function initHRNchat(customConfig = {}) {
             state.processingAction = false;
             return;
         }
-        
+
         const success = await attemptLogin(em, p);
         if (success) {
             localStorage.setItem('hrn_auth_email', em);
@@ -2095,10 +2089,8 @@ export function initHRNchat(customConfig = {}) {
             if (state.user) setupGlobalPresence(state.user.id);
             window.nav('scr-lobby');
             window.loadRooms();
-        } else {
-            // attemptLogin already toasted the error
-        }
-        
+        } else {}
+
         window.setLoading(false);
         state.processingAction = false;
     };
@@ -2219,8 +2211,8 @@ export function initHRNchat(customConfig = {}) {
         state.processingAction = false;
     };
 
-      
-    
+
+
     const finishReg = async (temp) => {
         const {
             error
@@ -2254,7 +2246,7 @@ export function initHRNchat(customConfig = {}) {
             targetUser = null;
         let avatarUrl = null;
         let rawPass = null;
-        
+
         if (isDirect) {
             targetUser = $('c-target-user').value.trim();
             if (!targetUser) {
@@ -2277,8 +2269,7 @@ export function initHRNchat(customConfig = {}) {
             isVisible = true;
         } else {
             n = $('c-name').value.trim();
-            
-            // --- WIJZIGING: Avatar URL verwerken naar Base64 ---
+
             const inputUrl = $('c-avatar').value.trim();
             if (inputUrl) {
                 window.setLoading(true, "Processing image...");
@@ -2286,8 +2277,7 @@ export function initHRNchat(customConfig = {}) {
             } else {
                 avatarUrl = null;
             }
-            // ------------------------------------------------
-            
+
             rawPass = $('c-pass').value;
             isVisible = $('c-visible').checked;
             if (!n) {
@@ -2297,7 +2287,7 @@ export function initHRNchat(customConfig = {}) {
                 return;
             }
         }
-        
+
         let allowedUsers = ['*'];
         if (isDirect) allowedUsers = [
             state.user.id,
@@ -2309,12 +2299,12 @@ export function initHRNchat(customConfig = {}) {
                 if (!allowedUsers.includes(state.user.id)) allowedUsers.push(state.user.id);
             }
         }
-        
+
         window.setLoading(true, "Creating...");
         const roomSalt = generateSalt();
         const insertData = {
             name: n,
-            avatar_url: avatarUrl, // Dit is nu de base64 string
+            avatar_url: avatarUrl,
             has_password: !!rawPass,
             is_visible: isVisible,
             salt: roomSalt,
@@ -2322,20 +2312,20 @@ export function initHRNchat(customConfig = {}) {
             allowed_users: allowedUsers,
             is_direct: isDirect
         };
-        
+
         const {
             data,
             error
         } = await db.from('rooms').insert(
             [insertData]).select();
-            
+
         if (error) {
             window.toast("Creation failed.");
             state.processingAction = false;
             window.setLoading(false);
             return;
         }
-        
+
         if (data && data.length > 0) {
             const newRoom = data[0];
             if (rawPass) {
@@ -2397,45 +2387,48 @@ export function initHRNchat(customConfig = {}) {
         window.toast("ID copied.");
     };
 
-        // x Helper functie: Afbeelding ophalen, downscalen en converteren naar Base64
     const processAvatarUrl = async (url) => {
-        if (!url || url.startsWith('data:')) return url; // Alleen URL's verwerken
-        
+        if (!url || url.startsWith('data:')) return url;
+
         try {
-            // Gebruik de proxy om CORS fouten te voorkomen
             const response = await fetch(CONFIG.proxyUrl + url);
-            if (!response.ok) return url; // Fallback naar originele URL bij fout
-            
+            if (!response.ok) return url;
+
             const blob = await response.blob();
-            
+
             return new Promise((resolve) => {
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     const img = new Image();
                     img.onload = () => {
                         const canvas = document.createElement('canvas');
-                        let w = img.width, h = img.height;
-                        const max = 250; // Max grootte
-                        
-                        // Bereken verhoudingen
+                        let w = img.width,
+                            h = img.height;
+                        const max = 250;
+
                         if (w > h) {
-                            if (w > max) { h *= max / w; w = max; }
+                            if (w > max) {
+                                h *= max / w;
+                                w = max;
+                            }
                         } else {
-                            if (h > max) { w *= max / h; h = max; }
+                            if (h > max) {
+                                w *= max / h;
+                                h = max;
+                            }
                         }
-                        
+
                         canvas.width = w;
                         canvas.height = h;
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(img, 0, 0, w, h);
-                        
-                        // Zet om naar base64 string
+
                         resolve(canvas.toDataURL('image/jpeg', 0.85));
                     };
-                    img.onerror = () => resolve(url); // Fallback
+                    img.onerror = () => resolve(url);
                     img.src = e.target.result;
                 };
-                reader.onerror = () => resolve(url); // Fallback
+                reader.onerror = () => resolve(url);
                 reader.readAsDataURL(blob);
             });
         } catch (err) {
@@ -2686,12 +2679,11 @@ export function initHRNchat(customConfig = {}) {
     const init = async () => {
         await localDB.init();
         monitorConnection();
-        
-        // Warm up cache for avatars if online
+
         if (navigator.onLine) {
             await warmUpAvatarCache();
         }
-        
+
         const hasMaster = await checkMaster();
         const storedEmail = localStorage.getItem('hrn_auth_email');
         const storedPass = localStorage.getItem('hrn_auth_pass');
@@ -2716,7 +2708,6 @@ export function initHRNchat(customConfig = {}) {
                         window.nav('scr-lobby');
                         window.loadRooms();
                     } else {
-                        // Auto-login failed, check offline cache
                         const knownUser = await localDB.get('known_users', storedEmail);
                         const hashInput = await sha256(storedPass + storedEmail);
                         if (knownUser && knownUser.pass_hash === hashInput) {
