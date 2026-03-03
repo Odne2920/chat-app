@@ -253,6 +253,14 @@ export function initHRNchat(customConfig = {}) {
         p.textContent = t;
         return p.innerHTML;
     };
+    
+    // New helper function to append cache parameter
+    const addCacheParam = (url) => {
+        if (!url || url.startsWith('data:')) return url;
+        const separator = url.includes('?') ? '&' : '?';
+        return `${url}${separator}cache=1-hrn`;
+    };
+
     const truncateText = (text, maxLength = 20) => !text ? "" : text.length > maxLength ? text.substring(0, maxLength) + "..." : text;
     const $ = id => document.getElementById(id);
     const getTimeFromDate = (d) => new Date(d).toLocaleTimeString('en-GB', {
@@ -399,7 +407,8 @@ export function initHRNchat(customConfig = {}) {
             return profile;
         }
         try {
-            const response = await fetch(CONFIG.proxyUrl + profile.avatar_url);
+            // Apply cache param before fetching
+            const response = await fetch(CONFIG.proxyUrl + addCacheParam(profile.avatar_url));
             if (!response.ok) throw new Error("Invalid image response");
             const blob = await response.blob();
             return new Promise((resolve) => {
@@ -477,7 +486,8 @@ export function initHRNchat(customConfig = {}) {
             avatar: null
         };
         if (!room.is_direct) {
-            const avatar = (!state.isOfflineMode || (room.avatar_url && room.avatar_url.startsWith('data:'))) ? room.avatar_url : null;
+            // Apply cache param to group avatar
+            const avatar = (!state.isOfflineMode || (room.avatar_url && room.avatar_url.startsWith('data:'))) ? addCacheParam(room.avatar_url) : null;
             return {
                 name: room.name,
                 avatar: avatar
@@ -503,7 +513,8 @@ export function initHRNchat(customConfig = {}) {
             name: 'Unknown User',
             avatar: null
         };
-        const avatar = profile.cached_avatar || (!state.isOfflineMode ? profile.avatar_url : null);
+        // Apply cache param to profile avatar if not cached locally
+        const avatar = profile.cached_avatar || (!state.isOfflineMode ? addCacheParam(profile.avatar_url) : null);
         return {
             name: profile.full_name || 'User',
             avatar: avatar
@@ -1290,7 +1301,7 @@ export function initHRNchat(customConfig = {}) {
     };
     const updateCarouselPreview = () => {
         const preview = $('avatar-preview-el');
-        if (state.selectedAvatar) preview.innerHTML = `<img src="${state.selectedAvatar}">`;
+        if (state.selectedAvatar) preview.innerHTML = `<img src="${addCacheParam(state.selectedAvatar)}">`;
     };
     window.carouselNav = (direction) => {
         let index = AVATARS.indexOf(state.selectedAvatar);
@@ -1442,7 +1453,7 @@ export function initHRNchat(customConfig = {}) {
             return;
         }
         $('picker-count').innerText = displayUsers.length;
-        container.innerHTML = displayUsers.map(u => `<div class="picker-user-card" style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><div style="width:28px;height:28px;border-radius:50%;background:#f2f2f7;overflow:hidden;margin-right:8px;display:flex;align-items:center;justify-content:center;color:var(--accent);font-weight:800;font-size:11px">${u.avatar ? `<img src="${u.avatar}">` : u.name.charAt(0)}</div><div style="flex:1;min-width:0"><div style="font-weight:700;font-size:12px">${esc(u.name)} ${u.id === state.user.id ? '<span style="color:var(--text-mute);font-weight:500">(You)</span>' : ''}</div><div style="font-size:9px;color:var(--text-mute);font-family:monospace">${u.id}</div></div><button class="picker-remove-btn" style="background:transparent;border:none;color:var(--danger);cursor:pointer;padding:8px" onclick="window.removePickerUser('${u.id}')"><i data-lucide="x" style="width:14px;height:14px"></i></button></div>`).join('');
+        container.innerHTML = displayUsers.map(u => `<div class="picker-user-card" style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><div style="width:28px;height:28px;border-radius:50%;background:#f2f2f7;overflow:hidden;margin-right:8px;display:flex;align-items:center;justify-content:center;color:var(--accent);font-weight:800;font-size:11px">${u.avatar ? `<img src="${addCacheParam(u.avatar)}">` : u.name.charAt(0)}</div><div style="flex:1;min-width:0"><div style="font-weight:700;font-size:12px">${esc(u.name)} ${u.id === state.user.id ? '<span style="color:var(--text-mute);font-weight:500">(You)</span>' : ''}</div><div style="font-size:9px;color:var(--text-mute);font-family:monospace">${u.id}</div></div><button class="picker-remove-btn" style="background:transparent;border:none;color:var(--danger);cursor:pointer;padding:8px" onclick="window.removePickerUser('${u.id}')"><i data-lucide="x" style="width:14px;height:14px"></i></button></div>`).join('');
     };
     window.removePickerUser = (id) => {
         state.selectedAllowedUsers = state.selectedAllowedUsers.filter(u => u.id !== id);
@@ -1557,7 +1568,7 @@ export function initHRNchat(customConfig = {}) {
         $('acc-page-type').innerText = "Full Account";
         $('acc-page-id').innerText = state.user.id;
         const avPrev = $('acc-page-avatar');
-        if (avatar) avPrev.innerHTML = `<img src="${avatar}">`;
+        if (avatar) avPrev.innerHTML = `<img src="${addCacheParam(avatar)}">`;
         else avPrev.innerText = name.charAt(0);
         $('acc-email-wrapper').style.display = 'block';
         $('acc-page-email').innerText = state.user.email || "Not set";
@@ -1589,7 +1600,7 @@ export function initHRNchat(customConfig = {}) {
         }
         const profile = await getProfile(state.user.id);
         if (profile && profile.cached_avatar) avatar = profile.cached_avatar;
-        if (avatar) btn.innerHTML = `<img src="${avatar}">`;
+        if (avatar) btn.innerHTML = `<img src="${addCacheParam(avatar)}">`;
         else btn.innerText = (name || "U").charAt(0);
     };
     const getDateLabel = (d) => {
@@ -1712,7 +1723,7 @@ export function initHRNchat(customConfig = {}) {
         const display = await resolveRoomDisplay(room);
         $('info-name').innerText = display.name;
         const avEl = $('info-avatar');
-        if (display.avatar) avEl.innerHTML = `<img src="${display.avatar}">`;
+        if (display.avatar) avEl.innerHTML = `<img src="${display.avatar}">`; // Already handled by resolveRoomDisplay
         else avEl.innerText = display.name.charAt(0);
         if (room.is_direct) {
             $('info-type').innerText = "Direct Message";
@@ -1925,7 +1936,7 @@ export function initHRNchat(customConfig = {}) {
         state.currentRoomDisplay = await resolveRoomDisplay(roomData);
         $('chat-title').innerText = state.currentRoomDisplay.name;
         const avEl = $('chat-avatar-display');
-        if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`;
+        if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`; // Already handled
         else avEl.innerText = state.currentRoomDisplay.name.charAt(0).toUpperCase();
         const editBtn = $('info-edit-btn');
         if (!isDirect && roomData?.created_by === state.user.id) editBtn.style.display = 'flex';
