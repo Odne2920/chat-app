@@ -89,6 +89,7 @@ export function initHRNchat(customConfig = {}) {
 		isProcessingQueue: false,
 		isCapacityBlocked: false,
 		authListener: null,
+		loginRetryCount: 0,
 		ui: {
 			isOverlayOpen: false,
 			isContextOpen: false,
@@ -749,6 +750,52 @@ export function initHRNchat(customConfig = {}) {
 			setConnectionVisuals('connected');
 		}
 	};
+	const attemptLogin = async (email, pass) => {
+		if (state.loginRetryCount > 5) {
+			window.toast("Connection failed after multiple attempts.");
+			setAppMode(true);
+			return;
+		}
+		state.loginRetryCount++;
+		const {
+			error
+		} = await db.auth.signInWithPassword({
+			email,
+			password: pass
+		});
+		if (error) {
+			if (error.message.includes("Failed to fetch") || error.message.includes("Network")) {
+				window.toast(`Connection lost. Retrying (${state.loginRetryCount})...`);
+				setTimeout(() => attemptLogin(email, pass), 2000); 
+			} else {
+				localStorage.removeItem('hrn_auth_email');
+				localStorage.removeItem('hrn_auth_pass');
+				window.nav('scr-login');
+				window.toast(error.message);
+			}
+		} else {
+			state.loginRetryCount = 0; 
+			const {
+				data: {
+					user
+				}
+			} = await db.auth.getUser();
+			state.user = user;
+			const hashInput = await sha256(pass + email);
+			await localDB.put('known_users', {
+				id: email,
+				pass_hash: hashInput,
+				email: email,
+				metadata: user.user_metadata,
+				userId: user.id
+			});
+			setAppMode(false);
+			setupGlobalPresence(state.user.id);
+			if (state.currentRoomId) attemptHardReconnect();
+			window.loadRooms();
+			window.toast("Connected.");
+		}
+	};
 	window.goOnline = async () => {
 		state.isCapacityBlocked = false;
 		const overlay = $('block-overlay');
@@ -759,58 +806,13 @@ export function initHRNchat(customConfig = {}) {
 			setAppMode(false);
 			window.setLoading(true, "Connecting...");
 		} else {
-			window.toast("Connecting...");
+			window.toast("Reconnecting...");
 		}
 		const storedEmail = localStorage.getItem('hrn_auth_email');
 		const storedPass = localStorage.getItem('hrn_auth_pass');
 		if (storedEmail && storedPass) {
-			const {
-				error
-			} = await db.auth.signInWithPassword({
-				email: storedEmail,
-				password: storedPass
-			});
-			if (!error) {
-				const {
-					data: {
-						user
-					}
-				} = await db.auth.getUser();
-				state.user = user;
-				await localDB.put('known_users', {
-					id: user.id,
-					email: user.email,
-					metadata: user.user_metadata
-				});
-				if (state.user) setupGlobalPresence(state.user.id);
-				if (state.currentRoomId) attemptHardReconnect();
-				window.loadRooms();
-				if (isAuthScreen) window.setLoading(false);
-				window.toast("Back online.");
-			} else {
-				if (isAuthScreen) window.setLoading(false);
-				if (error.message.includes("Failed to fetch") || error.message.includes("Network")) {
-					window.toast("Connection failed.");
-					setAppMode(true);
-				} else if (error.status === 400 || error.status === 401 || error.status === 403 || error.message.toLowerCase().includes("banned") || error.message.toLowerCase().includes("disabled")) {
-					window.toast("Account disabled or banned.");
-					if (isAuthScreen) {
-						window.nav('scr-start');
-					} else {
-						localStorage.removeItem('hrn_auth_email');
-						localStorage.removeItem('hrn_auth_pass');
-						state.user = null;
-						setAppMode(true);
-					}
-				} else {
-					window.toast("Session expired or invalid.");
-					if (isAuthScreen) {
-						window.nav('scr-login');
-					} else {
-						setAppMode(true);
-					}
-				}
-			}
+			await attemptLogin(storedEmail, storedPass);
+			if (isAuthScreen) window.setLoading(false);
 		} else {
 			if (isAuthScreen) {
 				window.setLoading(false);
@@ -1016,6 +1018,8 @@ export function initHRNchat(customConfig = {}) {
 				if (state.isOfflineMode) return;
 				if (state.isMasterTab && !state.isChatChannelReady && state.currentRoomId) {
 					attemptHardReconnect();
+				} else if (state.isMasterTab && navigator.onLine && !state.globalPresenceReady) {
+					window.goOnline();
 				}
 			}
 		});
@@ -1990,8 +1994,6 @@ export function initHRNchat(customConfig = {}) {
 			window.setLoading(false);
 			if (error.message.includes("Invalid login credentials")) {
 				window.toast("Wrong email or password.");
-			} else if (error.status === 400 || error.status === 401 || error.status === 403 || error.message.toLowerCase().includes("banned") || error.message.toLowerCase().includes("disabled")) {
-				window.toast("Account disabled or banned.");
 			} else {
 				window.toast("Login failed.");
 			}
@@ -2005,7 +2007,6 @@ export function initHRNchat(customConfig = {}) {
 				}
 			} = await db.auth.getUser();
 			state.user = user;
-			setAppMode(false);
 			const hashInput = await sha256(p + em);
 			await localDB.put('known_users', {
 				id: em,
@@ -2014,6 +2015,7 @@ export function initHRNchat(customConfig = {}) {
 				metadata: user.user_metadata,
 				userId: user.id
 			});
+			setAppMode(false);
 			if (state.user) setupGlobalPresence(state.user.id);
 			window.nav('scr-lobby');
 			window.loadRooms();
