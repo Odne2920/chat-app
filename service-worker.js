@@ -1,4 +1,4 @@
-const CACHE_NAME="hrn-cache-v1.0.01013";
+const CACHE_NAME="hrn-cache-v1.0.01014";
 const FILES_TO_CACHE=[
 "./index.html?v=16",
 "./assets/logic.js?v=16",
@@ -18,7 +18,8 @@ const FILES_TO_CACHE=[
 async function cacheMissingFiles(){
 const cache=await caches.open(CACHE_NAME);
 for(const file of FILES_TO_CACHE){
-if(!(await cache.match(file))){
+const match=await cache.match(file);
+if(!match){
 try{
 const res=await fetch(file,{cache:"no-store"});
 if(res.ok)await cache.put(file,res.clone());
@@ -43,32 +44,12 @@ Promise.all(keys.map(k=>k!==CACHE_NAME&&caches.delete(k)))
 
 self.addEventListener("fetch",e=>{
 const req=e.request;
-const url=new URL(req.url);
-
-if(req.method==="GET" && url.search.includes("cache=1-hrn")){
-e.respondWith(
-caches.open(CACHE_NAME).then(async cache=>{
-const match=await cache.match(req);
-if(match)return match;
-try{
-const res=await fetch(req);
-if(res.ok)cache.put(req,res.clone());
-return res;
-}catch(err){
-return match;
-}
-})
-);
-return;
-}
-
 if(req.mode==="navigate"){
 e.respondWith(
 fetch(req).catch(()=>caches.match("./index.html?v=16"))
 );
 return;
 }
-
 e.respondWith(
 caches.match(req).then(res=>res||fetch(req))
 );
