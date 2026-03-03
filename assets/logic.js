@@ -1511,24 +1511,7 @@ export function initHRNchat(customConfig = {}) {
 		return t;
 	};
 	const checkChatEmpty = () => {
-		const container = $('chat-messages');
-		const emptyState = $('chat-empty-state');
-		const hasMessages = container.querySelector('.msg');
-		if (hasMessages) {
-			if (emptyState) emptyState.style.display = 'none';
-		} else {
-			if (!emptyState) {
-				container.insertAdjacentHTML('beforeend', `
-                    <div id="chat-empty-state" class="empty-state" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-mute);padding-bottom:60px">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                        <div class="empty-title">No Messages Yet</div>
-                        <div class="empty-subtitle">Start the conversation below.</div>
-                    </div>
-                `);
-			} else {
-				emptyState.style.display = 'flex';
-			}
-		}
+		return;
 	};
 	const renderMsg = (m, prevMsg, isDirect, isOptimistic = false) => {
 		if (!m) return "";
@@ -2448,12 +2431,7 @@ export function initHRNchat(customConfig = {}) {
 			return true;
 		});
 		if (filtered.length === 0) {
-			list.innerHTML = `
-            <div class="empty-state" style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;margin-top:40px;padding:0 20px">
-                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                <div class="empty-title">No Chats Found</div>
-                <div class="empty-subtitle">Create or join a group to get started.</div>
-            </div>`;
+			list.innerHTML = "";
 		} else list.innerHTML = filtered.map(r => `<div class="room-card" onclick="window.joinAttempt('${r.id}')"><div class="chat-avatar" style="width:36px;height:36px;margin-right:10px;font-size:13px">${r.display_avatar ? `<img src="${r.display_avatar}">` : (r.display_name||'G').charAt(0)}</div><span class="room-name">${esc(r.display_name)}</span><span class="room-icon">${r.is_direct ? '<i data-lucide="user" style="width:14px;height:14px"></i>' : ''}${r.has_password ? '<i data-lucide="lock" style="width:14px;height:14px"></i>' : ''}</span></div>`).join('');
 	};
 	window.joinAttempt = async (id) => {
