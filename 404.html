@@ -3,8 +3,6 @@
    <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <link rel="icon" href="https://hrn-chat.github.io/assets/branding/favicon/favicon-black.png" media="(prefers-color-scheme: light)">
-      <link rel="icon" href="https://hrn-chat.github.io/assets/branding/favicon/favicon-white.png" media="(prefers-color-scheme: dark)">
       <title>404 &middot Page Not Found</title>
       <style>
          :root{--bg:#fefefe;--text-main:#1c1c1e;--text-muted:#a0a0a5}*{margin:0;padding:0;box-sizing:border-box;font-family:'Plus Jakarta Sans',sans-serif}html,body{height:100%;width:100%;background:var(--bg);display:flex;justify-content:center;align-items:center;color:var(--text-main)}.container{text-align:center;display:flex;flex-direction:column;gap:12px}h1{font-family:'Impact','Arial Black',sans-serif;font-size:6rem;font-weight:400;color:#262626;line-height:1;letter-spacing:-2px}p{font-size:1rem;font-weight:300;color:var(--text-muted);max-width:280px;margin:0 auto;line-height:1.4}@media(max-width:480px){h1{font-size:4.5rem;letter-spacing:-1px}p{font-size:0.9rem}}
@@ -16,4 +14,7 @@
          <p>Page not found.</p>
       </div>
    </body>
+   <script>
+      !function(){const n=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches,e=window.location.hostname.includes("github.io")?`https://${window.location.hostname}${window.location.pathname.split("/").slice(0,2).join("/")}`:"",i=n?`${e}/assets/branding/favicon/favicon-white.png`:`${e}/assets/branding/favicon/favicon-black.png`;let o=document.querySelector("link[rel~='icon']");o||(o=document.createElement("link"),o.rel="icon",document.head.appendChild(o)),o.href=i}();
+   </script>
 </html>
