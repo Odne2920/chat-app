@@ -39,3 +39,6 @@
 - Designed to feel safe and predictable
 
 
+## Current bugs
+- App goes to login screen when internet is restored and user isn't logged in.
+- Avatar images don't load offline.
