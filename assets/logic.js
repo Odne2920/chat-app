@@ -1,7 +1,7 @@
 /*
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
- *  Version: 1.0.6
+ *  Version: 1.0.7
  *  assets/logic.js 
  *  MIT License
  *  GH: HyperRushNet & hrn-chat
@@ -76,7 +76,7 @@ export function initHRNchat(customConfig = {}) {
         isReconnecting: false,
         deleteConfirmTimeout: null,
         profileCache: {},
-        roomImageCache: {}, // Simple in-memory cache for room images during session
+        roomImageCache: {},
         editingMessage: null,
         contextTarget: null,
         carouselIndex: 0,
@@ -348,7 +348,11 @@ export function initHRNchat(customConfig = {}) {
         const t = document.createElement('div');
         t.className = 'toast-item';
         t.innerText = msg;
+        const spawnTime = Date.now(); // Capture spawn time
         t.onclick = () => {
+            // Only allow dismiss after 200ms
+            if (Date.now() - spawnTime < 200) return; 
+            
             t.style.opacity = '0';
             setTimeout(() => {
                 t.remove();
@@ -823,6 +827,8 @@ export function initHRNchat(customConfig = {}) {
             state.globalOnlineCount = users.length;
             state.globalPresenceReady = true;
             schedulePresenceUpdate();
+            
+            // CAPACITY CHECK ON SYNC
             if (state.user && !state.isOfflineMode && !state.isCapacityBlocked) {
                 if (users.length > CONFIG.maxUsers) {
                     const myIndex = users.findIndex(u => u.user_id === state.user.id);
@@ -838,9 +844,58 @@ export function initHRNchat(customConfig = {}) {
             }
         });
     };
+    
+    // Helper to sync messages on reconnect
+    const syncRoomMessages = async (roomId) => {
+        if (!roomId || !state.currentRoomData) return;
+        
+        // Determine the last message we have in the UI
+        const container = $('chat-messages');
+        const lastMsgEl = container.querySelector('.msg:last-of-type');
+        const lastDate = lastMsgEl ? lastMsgEl.dataset.time : new Date(0).toISOString();
+        
+        // Fetch messages newer than the last one we have
+        const { data, error } = await db.from('messages').select('*')
+            .eq('room_id', roomId)
+            .gt('created_at', lastDate)
+            .order('created_at', { ascending: true });
+
+        if (data && data.length > 0) {
+            try {
+                const res = await workerExec('decryptHistory', { messages: data, keyId: roomId });
+                const validMsgs = res.results.filter(m => !m.error);
+                
+                if (validMsgs.length > 0) {
+                    let prev = lastMsgEl ? { 
+                        user_id: lastMsgEl.dataset.uid, 
+                        created_at: lastMsgEl.dataset.time 
+                    } : null;
+
+                    validMsgs.forEach(m => {
+                        const html = renderMsg(m, prev, state.currentRoomData?.is_direct);
+                        container.insertAdjacentHTML('beforeend', html);
+                        prev = m;
+                    });
+                    
+                    container.scrollTop = container.scrollHeight; // Scroll to bottom
+                    await localDB.putAll('messages', validMsgs.map(m => ({ ...m, room_id: roomId })));
+                }
+            } catch (e) {
+                console.error("Sync decrypt error", e);
+            }
+        }
+    };
+
     const attemptHardReconnect = () => {
         if (!state.user || state.isOfflineMode) return;
         if (state.isCapacityBlocked) return;
+        
+        // CAPACITY CHECK ON RECONNECT
+        if (state.globalOnlineCount > CONFIG.maxUsers) {
+             handleServerFull();
+             return;
+        }
+
         if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
         if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
         state.reconnectTimer = null;
@@ -960,13 +1015,15 @@ export function initHRNchat(customConfig = {}) {
                 window.nav('scr-lobby');
                 window.loadRooms();
             } else {
-                window.nav('scr-login');
+                // Do not navigate away on failure
+                window.toast("Login failed. Check credentials.");
             }
             if (isAuthScreen) window.setLoading(false);
         } else {
             if (isAuthScreen) {
                 window.setLoading(false);
-                window.nav('scr-start');
+                // Do not navigate to start if already on an auth screen or elsewhere
+                // window.nav('scr-start'); 
             } else {
                 window.toast("No saved login found.");
                 setAppMode(true);
@@ -1084,6 +1141,11 @@ export function initHRNchat(customConfig = {}) {
                 state.isReconnecting = false;
                 if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
                 setConnectionVisuals('connected');
+                
+                // SYNC MESSAGES ON RECONNECT
+                if(state.isReconnecting) { 
+                     syncRoomMessages(id);
+                }
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                 if (state.connectionTimeoutTimer) {
                     clearTimeout(state.connectionTimeoutTimer);
