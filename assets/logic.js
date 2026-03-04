@@ -2672,7 +2672,7 @@ export function initHRNchat(customConfig = {}) {
             const {
                 data: canAccess,
                 error: rpcError
-            } = await execQuery(db.rpc('can_access_room, {
+            } = await execQuery(db.rpc('can_access_room', {
                 p_room_id: id
             }));
             if (rpcError) throw rpcError;
