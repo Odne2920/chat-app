@@ -1,7 +1,7 @@
 /*
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
- *  Version: 1.0.9
+ *  Version: 1.0.10
  *  assets/logic.js 
  *  MIT License
  *  GH: HyperRushNet & hrn-chat
@@ -22,7 +22,8 @@ export function initHRNchat(customConfig = {}) {
         presenceHeartbeatMs: customConfig.presenceHeartbeatMs || 10000,
         verificationCodeExpiry: customConfig.verificationCodeExpiry || 600,
         maxMessageLength: customConfig.maxMessageLength || 10000,
-        proxyUrl: customConfig.proxyUrl || "https://vercel-serverless-hrn.vercel.app/api/CORSproxy.js?url="
+        proxyUrl: customConfig.proxyUrl || "https://vercel-serverless-hrn.vercel.app/api/CORSproxy.js?url=",
+        requestTimeout: 3000 // 3 Seconds timeout
     };
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
     const DB_NAME = 'HRN_LOCAL_DB_2';
@@ -104,6 +105,36 @@ export function initHRNchat(customConfig = {}) {
     let lastToastTime = 0;
     
     const tabChannel = new BroadcastChannel('hrn_tab_sync');
+    
+    // Helper for Timeout & Cache Busting
+    const fetchWithTimeout = async (promise, ms = CONFIG.requestTimeout) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), ms);
+        try {
+            // We assume the promise passed is a Supabase query chain that might not support signal directly in older versions,
+            // but modern Supabase-JS v2 supports signal in options.
+            // If the promise is just a standard fetch, it works.
+            // Here we wrap the execution.
+            const result = await promise; 
+            clearTimeout(timeout);
+            return result;
+        } catch (error) {
+            clearTimeout(timeout);
+            throw error;
+        }
+    };
+
+    // Wrapper to execute Supabase query with AbortSignal if possible, otherwise just timeout wrapper
+    const execQuery = async (queryPromise) => {
+        // Race between query and timeout
+        return Promise.race([
+            queryPromise,
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error("Request Timeout")), CONFIG.requestTimeout)
+            )
+        ]);
+    };
+
     const localDB = {
         db: null,
         async init() {
@@ -159,8 +190,7 @@ export function initHRNchat(customConfig = {}) {
         },
         async getAll(store) {
             return new Promise((res, rej) => {
-                if (!this.db) return res(
-                    []);
+                if (!this.db) return res([]);
                 const tx = this.db.transaction(store, 'readonly');
                 const req = tx.objectStore(store).getAll();
                 req.onsuccess = () => res(req.result || []);
@@ -344,11 +374,8 @@ export function initHRNchat(customConfig = {}) {
         }, 500);
     };
     
-    // Toast Queue with Deduplication
     const processToastQueue = () => {
         if (toastVisible || toastQueue.length === 0) return;
-        
-        // Deduplication Logic
         const msg = toastQueue[0];
         const now = Date.now();
         if (msg === lastToastText && (now - lastToastTime < 3000)) {
@@ -357,12 +384,10 @@ export function initHRNchat(customConfig = {}) {
             processToastQueue(); 
             return;
         }
-        
         toastVisible = true;
         const confirmedMsg = toastQueue.shift();
         lastToastText = confirmedMsg;
         lastToastTime = now;
-
         const c = $('toast-container');
         const t = document.createElement('div');
         t.className = 'toast-item';
@@ -371,22 +396,13 @@ export function initHRNchat(customConfig = {}) {
         t.onclick = () => {
             if (Date.now() - spawnTime < 200) return;
             t.style.opacity = '0';
-            setTimeout(() => {
-                t.remove();
-                toastVisible = false;
-                processToastQueue();
-            }, 400);
+            setTimeout(() => { t.remove(); toastVisible = false; processToastQueue(); }, 400);
         };
         c.appendChild(t);
         setTimeout(() => {
             if (t.parentNode) {
                 t.style.opacity = '0';
-                setTimeout(
-                    () => {
-                        if (t.parentNode) t.remove();
-                        toastVisible = false;
-                        processToastQueue();
-                    }, 400);
+                setTimeout(() => { if (t.parentNode) t.remove(); toastVisible = false; processToastQueue(); }, 400);
             }
         }, 3000);
     };
@@ -407,13 +423,9 @@ export function initHRNchat(customConfig = {}) {
     };
     const safeAwait = async (promise) => {
         try {
-            return [await promise,
-                null
-            ];
+            return [await promise, null];
         } catch (error) {
-            return [null,
-                error
-            ];
+            return [null, error];
         }
     };
     
@@ -439,23 +451,15 @@ export function initHRNchat(customConfig = {}) {
                     ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
                     resolve(canvas.toDataURL('image/jpeg', 0.85));
                 };
-                img.onerror = () => {
-                    URL.revokeObjectURL(blobUrl);
-                    resolve(null);
-                };
+                img.onerror = () => { URL.revokeObjectURL(blobUrl); resolve(null); };
                 img.src = blobUrl;
             });
-        } catch (e) {
-            return null;
-        }
+        } catch (e) { return null; }
     };
 
     const cacheAvatar = async (profile) => {
         if (!profile || !profile.avatar_url) return profile;
-        if (profile.avatar_url.startsWith('data:')) {
-            profile.cached_avatar = profile.avatar_url;
-            return profile;
-        }
+        if (profile.avatar_url.startsWith('data:')) { profile.cached_avatar = profile.avatar_url; return profile; }
         if(profile.cached_avatar) return profile;
         const dataUrl = await processImageToCache(profile.avatar_url);
         if (dataUrl) {
@@ -473,10 +477,7 @@ export function initHRNchat(customConfig = {}) {
         if (dataUrl) {
             room.cached_avatar = dataUrl;
             const dbRoom = await localDB.get('rooms', room.id);
-            if (dbRoom) {
-                dbRoom.cached_avatar = dataUrl;
-                await localDB.put('rooms', dbRoom);
-            }
+            if (dbRoom) { dbRoom.cached_avatar = dataUrl; await localDB.put('rooms', dbRoom); }
             state.roomImageCache[room.id] = dataUrl;
             if (state.currentRoomId === room.id) {
                  const avEl = $('chat-avatar-display');
@@ -491,9 +492,7 @@ export function initHRNchat(customConfig = {}) {
         const profiles = await localDB.getAll('profiles');
         if (!profiles || profiles.length === 0) return;
         const promises = profiles.map(async (p) => {
-            if (p.avatar_url && !p.avatar_url.startsWith('data:') && !p.cached_avatar) {
-                return cacheAvatar(p);
-            }
+            if (p.avatar_url && !p.avatar_url.startsWith('data:') && !p.cached_avatar) return cacheAvatar(p);
             return Promise.resolve();
         });
         await Promise.all(promises);
@@ -504,9 +503,7 @@ export function initHRNchat(customConfig = {}) {
         const rooms = await localDB.getAll('rooms');
         if (!rooms || rooms.length === 0) return;
         const promises = rooms.map(async (r) => {
-            if (r.avatar_url && !r.avatar_url.startsWith('data:') && !r.cached_avatar) {
-                return cacheRoomImage(r);
-            }
+            if (r.avatar_url && !r.avatar_url.startsWith('data:') && !r.cached_avatar) return cacheRoomImage(r);
             return Promise.resolve();
         });
         await Promise.all(promises);
@@ -518,81 +515,42 @@ export function initHRNchat(customConfig = {}) {
         let profile = await localDB.get('profiles', userId);
         if (!state.isOfflineMode) {
             try {
-                const {
-                    data: serverProfile,
-                    error
-                } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', userId).single();
+                const { data: serverProfile, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', userId).single();
                 if (serverProfile) {
                     const localTime = profile?.updated_at ? new Date(profile.updated_at).getTime() : 0;
                     const serverTime = serverProfile.updated_at ? new Date(serverProfile.updated_at).getTime() : 0;
                     const needsUpdate = !profile || serverTime > localTime || !profile.full_name;
                     if (needsUpdate) {
-                        const newProfileData = {
-                            ...serverProfile
-                        };
+                        const newProfileData = { ...serverProfile };
                         const urlChanged = !profile || profile.avatar_url !== serverProfile.avatar_url;
                         const needsImageCache = urlChanged || !profile?.cached_avatar;
-                        if (!needsImageCache && profile.cached_avatar) {
-                            newProfileData.cached_avatar = profile.cached_avatar;
-                        }
-                        if (needsImageCache && serverProfile.avatar_url) {
-                            await cacheAvatar(newProfileData);
-                            profile = await localDB.get('profiles', userId);
-                        } else {
-                            await localDB.put('profiles', newProfileData);
-                            profile = newProfileData;
-                        }
+                        if (!needsImageCache && profile.cached_avatar) { newProfileData.cached_avatar = profile.cached_avatar; }
+                        if (needsImageCache && serverProfile.avatar_url) { await cacheAvatar(newProfileData); profile = await localDB.get('profiles', userId); } 
+                        else { await localDB.put('profiles', newProfileData); profile = newProfileData; }
                     }
                 }
-            } catch (e) {
-                console.warn("Profile fetch failed, using cache if available", e);
-            }
+            } catch (e) { console.warn("Profile fetch failed", e); }
         }
-        if (profile) {
-            state.profileCache[userId] = profile;
-        }
+        if (profile) { state.profileCache[userId] = profile; }
         return profile;
     };
     const resolveRoomDisplay = async (room) => {
-        if (!room) return {
-            name: 'Chat',
-            avatar: null
-        };
+        if (!room) return { name: 'Chat', avatar: null };
         if (!room.is_direct) {
             let avatar = room.cached_avatar || (room.avatar_url && room.avatar_url.startsWith('data:') ? room.avatar_url : null);
-            if (!avatar && room.avatar_url && !state.isOfflineMode) {
-                cacheRoomImage(room);
-            }
-            return {
-                name: room.name,
-                avatar: avatar
-            };
+            if (!avatar && room.avatar_url && !state.isOfflineMode) cacheRoomImage(room);
+            return { name: room.name, avatar: avatar };
         }
         const myId = state.user?.id;
-        if (!myId) return {
-            name: 'Direct Message',
-            avatar: null
-        };
-        if (!room.allowed_users || room.allowed_users.length === 0) return {
-            name: 'Direct Message',
-            avatar: null
-        };
+        if (!myId) return { name: 'Direct Message', avatar: null };
+        if (!room.allowed_users || room.allowed_users.length === 0) return { name: 'Direct Message', avatar: null };
         const otherIds = room.allowed_users.filter(id => id !== myId && id !== '*');
         const otherId = otherIds.length > 0 ? otherIds[0] : null;
-        if (!otherId) return {
-            name: 'Direct Message',
-            avatar: null
-        };
+        if (!otherId) return { name: 'Direct Message', avatar: null };
         const profile = await getProfile(otherId);
-        if (!profile) return {
-            name: 'Unknown User',
-            avatar: null
-        };
+        if (!profile) return { name: 'Unknown User', avatar: null };
         const avatar = profile.cached_avatar || (!state.isOfflineMode ? profile.avatar_url : null);
-        return {
-            name: profile.full_name || 'User',
-            avatar: avatar
-        };
+        return { name: profile.full_name || 'User', avatar: avatar };
     };
     const workerCode = `
         self.onmessage = async (e) => { 
@@ -600,7 +558,6 @@ export function initHRNchat(customConfig = {}) {
             const encoder = new TextEncoder(); 
             const decoder = new TextDecoder(); 
             self.keys = self.keys || {};
-            
             try { 
                 if (type === 'deriveKey') { 
                     const keyMaterial = await crypto.subtle.importKey('raw', encoder.encode(payload.password), { name: 'PBKDF2' }, false, ['deriveKey']); 
@@ -622,10 +579,7 @@ export function initHRNchat(customConfig = {}) {
                     const results = []; 
                     for (const m of payload.messages) { 
                         try { 
-                            if (m.content === '/') { 
-                                results.push({ id: m.id, deleted: true, user_id: m.user_id, user_name: m.user_name, created_at: m.created_at, updated_at: m.updated_at }); 
-                                continue; 
-                            } 
+                            if (m.content === '/') { results.push({ id: m.id, deleted: true, user_id: m.user_id, user_name: m.user_name, created_at: m.created_at, updated_at: m.updated_at }); continue; } 
                             const binary = atob(m.content); 
                             const bytes = new Uint8Array(binary.length); 
                             for(let i=0; i<binary.length; i++) bytes[i] = binary.charCodeAt(i); 
@@ -635,17 +589,12 @@ export function initHRNchat(customConfig = {}) {
                             const text = decoder.decode(decrypted); 
                             const parts = text.split('|'); 
                             results.push({ id: m.id, time: parts[0], text: parts.slice(1).join('|'), user_id: m.user_id, user_name: m.user_name, created_at: m.created_at, updated_at: m.updated_at }); 
-                        } catch (err) { 
-                            results.push({ id: m.id, error: true }); 
-                        } 
+                        } catch (err) { results.push({ id: m.id, error: true }); } 
                     } 
                     self.postMessage({ id, type: 'historyDecrypted', results }); 
                 } else if (type === 'decryptSingle') { 
                     if (!self.keys[payload.keyId]) throw new Error("Key not derived"); 
-                    if (payload.content === '/') { 
-                        self.postMessage({ id, type: 'singleDecrypted', result: { deleted: true } }); 
-                        return; 
-                    } 
+                    if (payload.content === '/') { self.postMessage({ id, type: 'singleDecrypted', result: { deleted: true } }); return; } 
                     try { 
                         const binary = atob(payload.content); 
                         const bytes = new Uint8Array(binary.length); 
@@ -656,55 +605,29 @@ export function initHRNchat(customConfig = {}) {
                         const text = decoder.decode(decrypted); 
                         const parts = text.split('|'); 
                         self.postMessage({ id, type: 'singleDecrypted', result: { time: parts[0], text: parts.slice(1).join('|') } }); 
-                    } catch(e) { 
-                        self.postMessage({ id, type: 'singleDecrypted', error: e.message }); 
-                    } 
+                    } catch(e) { self.postMessage({ id, type: 'singleDecrypted', error: e.message }); } 
                 } 
-            } catch (error) { 
-                self.postMessage({ id, type: 'error', message: error.message }); 
-            } 
+            } catch (error) { self.postMessage({ id, type: 'error', message: error.message }); } 
         };
     `;
-    const workerBlob = new Blob([
-        workerCode
-    ], {
-        type: 'application/javascript'
-    });
+    const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
     const cryptoWorker = new Worker(URL.createObjectURL(workerBlob));
     const pendingResolvers = {};
     cryptoWorker.onmessage = (e) => {
-        const {
-            id,
-            type,
-            result,
-            error,
-            results,
-            success
-        } = e.data;
+        const { id, type, result, error, results, success } = e.data;
         const key = id || type;
         if (pendingResolvers[key]) {
             if (error || results?.error) pendingResolvers[key].reject(error || "Decryption failed");
             else if (type === 'keyDerived') pendingResolvers[key].resolve(success);
-            else pendingResolvers[key].resolve({
-                type,
-                result,
-                results
-            });
+            else pendingResolvers[key].resolve({ type, result, results });
             delete pendingResolvers[key];
         }
     };
     const workerExec = (type, payload) => {
         return new Promise((resolve, reject) => {
             const id = crypto.randomUUID();
-            pendingResolvers[id] = {
-                resolve,
-                reject
-            };
-            cryptoWorker.postMessage({
-                id,
-                type,
-                payload
-            });
+            pendingResolvers[id] = { resolve, reject };
+            cryptoWorker.postMessage({ id, type, payload });
         });
     };
     const generateSalt = () => {
@@ -718,20 +641,10 @@ export function initHRNchat(customConfig = {}) {
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     };
-    const deriveKey = (pass, salt, keyId) => workerExec('deriveKey', {
-        password: pass,
-        salt: salt,
-        keyId: keyId
-    });
+    const deriveKey = (pass, salt, keyId) => workerExec('deriveKey', { password: pass, salt: salt, keyId: keyId });
     const encryptMessage = async (text, keyId) => {
-        const time = new Date().toLocaleTimeString('en-GB', {
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-        const res = await workerExec('encrypt', {
-            text: time + "|" + text,
-            keyId: keyId
-        });
+        const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        const res = await workerExec('encrypt', { text: time + "|" + text, keyId: keyId });
         return res.result;
     };
     const getConnectionTimeout = () => {
@@ -749,10 +662,7 @@ export function initHRNchat(customConfig = {}) {
         if (state.isCapacityBlocked) return;
         state.isCapacityBlocked = true;
         await cleanupChannels(false);
-        if (state.globalPresenceChannel) {
-            state.globalPresenceChannel.unsubscribe();
-            state.globalPresenceChannel = null;
-        }
+        if (state.globalPresenceChannel) { state.globalPresenceChannel.unsubscribe(); state.globalPresenceChannel = null; }
         const overlay = $('block-overlay');
         if (overlay) {
             overlay.innerHTML = `
@@ -764,31 +674,12 @@ export function initHRNchat(customConfig = {}) {
         }
     };
     const cleanupChannels = async (keepGlobal = false) => {
-        if (state.connectionTimeoutTimer) {
-            clearTimeout(state.connectionTimeoutTimer);
-            state.connectionTimeoutTimer = null;
-        }
-        if (state.reconnectTimer) {
-            clearTimeout(state.reconnectTimer);
-            state.reconnectTimer = null;
-        }
-        if (state.heartbeatInterval) {
-            clearInterval(state.heartbeatInterval);
-            state.heartbeatInterval = null;
-        }
-        if (state.presenceChannel) {
-            state.presenceChannel.unsubscribe();
-            state.presenceChannel = null;
-            state.isPresenceSubscribed = false;
-        }
-        if (state.chatChannel) {
-            state.chatChannel.unsubscribe();
-            state.chatChannel = null;
-        }
-        if (!keepGlobal && state.globalPresenceChannel) {
-            state.globalPresenceChannel.unsubscribe();
-            state.globalPresenceChannel = null;
-        }
+        if (state.connectionTimeoutTimer) { clearTimeout(state.connectionTimeoutTimer); state.connectionTimeoutTimer = null; }
+        if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
+        if (state.heartbeatInterval) { clearInterval(state.heartbeatInterval); state.heartbeatInterval = null; }
+        if (state.presenceChannel) { state.presenceChannel.unsubscribe(); state.presenceChannel = null; state.isPresenceSubscribed = false; }
+        if (state.chatChannel) { state.chatChannel.unsubscribe(); state.chatChannel = null; }
+        if (!keepGlobal && state.globalPresenceChannel) { state.globalPresenceChannel.unsubscribe(); state.globalPresenceChannel = null; }
         state.isChatChannelReady = false;
         setConnectionVisuals('offline');
     };
@@ -803,29 +694,15 @@ export function initHRNchat(customConfig = {}) {
     const setupGlobalPresence = async (userId) => {
         if (state.isOfflineMode || state.isCapacityBlocked) return;
         if (state.globalPresenceChannel) state.globalPresenceChannel.unsubscribe();
-        state.globalPresenceChannel = db.channel('global-presence', {
-            config: {
-                presence: {
-                    key: userId || `listener_${state.tabId}`
-                }
-            }
-        });
-        state.globalPresenceChannel.on('presence', {
-            event: 'sync'
-        }, async () => {
+        state.globalPresenceChannel = db.channel('global-presence', { config: { presence: { key: userId || `listener_${state.tabId}` } } });
+        state.globalPresenceChannel.on('presence', { event: 'sync' }, async () => {
             const presState = state.globalPresenceChannel.presenceState();
             const users = [];
-            Object.keys(presState).forEach(key => {
-                presState[key].forEach(pres => {
-                    users.push(pres);
-                });
-            });
-            users.sort(
-                (a, b) => new Date(a.online_at) - new Date(b.online_at));
+            Object.keys(presState).forEach(key => { presState[key].forEach(pres => { users.push(pres); }); });
+            users.sort((a, b) => new Date(a.online_at) - new Date(b.online_at));
             state.globalOnlineCount = users.length;
             state.globalPresenceReady = true;
             schedulePresenceUpdate();
-            
             if (state.user && !state.isOfflineMode && !state.isCapacityBlocked) {
                 if (users.length > CONFIG.maxUsers) {
                     const myIndex = users.findIndex(u => u.user_id === state.user.id);
@@ -834,49 +711,48 @@ export function initHRNchat(customConfig = {}) {
             }
         }).subscribe(async (status) => {
             if (status === 'SUBSCRIBED') {
-                if (userId && state.isMasterTab) await state.globalPresenceChannel.track({
-                    user_id: userId,
-                    online_at: new Date().toISOString()
-                });
+                if (userId && state.isMasterTab) await state.globalPresenceChannel.track({ user_id: userId, online_at: new Date().toISOString() });
             }
         });
     };
     
-    const syncRoomMessages = async (roomId) => {
+    // Hard Refresh Messages on Reconnect
+    const hardRefreshRoomMessages = async (roomId) => {
         if (!roomId || !state.currentRoomData) return;
         const container = $('chat-messages');
-        const lastMsgEl = container.querySelector('.msg:last-of-type');
-        const lastDate = lastMsgEl ? lastMsgEl.dataset.time : new Date(0).toISOString();
         
-        const { data, error } = await db.from('messages').select('*')
-            .eq('room_id', roomId)
-            .gt('created_at', lastDate)
-            .order('created_at', { ascending: true });
-
-        if (data && data.length > 0) {
-            try {
+        // Fetch fresh list
+        let messages = [];
+        try {
+            const { data, error } = await execQuery(
+                db.from('messages').select('*').eq('room_id', roomId).order('created_at', { ascending: false }).limit(CONFIG.maxMessages)
+            );
+            if (error) throw error;
+            if (data) {
+                data.reverse();
+                // Decrypt
                 const res = await workerExec('decryptHistory', { messages: data, keyId: roomId });
-                const validMsgs = res.results.filter(m => !m.error);
+                messages = res.results.filter(m => !m.error);
                 
-                if (validMsgs.length > 0) {
-                    let prev = lastMsgEl ? { 
-                        user_id: lastMsgEl.dataset.uid, 
-                        created_at: lastMsgEl.dataset.time 
-                    } : null;
-
-                    validMsgs.forEach(m => {
-                        const html = renderMsg(m, prev, state.currentRoomData?.is_direct);
-                        container.insertAdjacentHTML('beforeend', html);
-                        prev = m;
-                    });
-                    
-                    container.scrollTop = container.scrollHeight;
-                    await localDB.putAll('messages', validMsgs.map(m => ({ ...m, room_id: roomId })));
-                }
-            } catch (e) {
-                console.error("Sync decrypt error", e);
+                // Hard Replace Cache
+                await localDB.clearRoomMessages(roomId);
+                await localDB.putAll('messages', messages.map(m => ({ ...m, room_id: roomId })));
             }
+        } catch (e) { return; } // Silent fail on reconnect fetch
+        
+        // Hard Replace UI
+        container.innerHTML = '';
+        state.lastRenderedDateLabel = null;
+        if (messages.length > 0) {
+            state.oldestMessageTimestamp = messages[0].created_at;
+            let html = '', prev = null;
+            messages.forEach(m => {
+                html += renderMsg(m, prev, state.currentRoomData?.is_direct);
+                prev = m;
+            });
+            container.innerHTML = html;
         }
+        container.scrollTop = container.scrollHeight;
     };
 
     const attemptHardReconnect = () => {
@@ -901,11 +777,14 @@ export function initHRNchat(customConfig = {}) {
     };
     
     const attemptLogin = async (email, pass) => {
-        const { error } = await db.auth.signInWithPassword({ email, password: pass });
-        if (error) {
+        try {
+            const { error } = await execQuery(db.auth.signInWithPassword({ email, password: pass }));
+            if (error) throw error;
+        } catch (e) {
             await new Promise(r => setTimeout(r, 3000));
             return attemptLogin(email, pass);
         }
+
         state.loginRetryCount = 0;
         const { data: { user } } = await db.auth.getUser();
         state.user = user;
@@ -1032,7 +911,8 @@ export function initHRNchat(customConfig = {}) {
                 state.isReconnecting = false;
                 if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
                 setConnectionVisuals('connected');
-                syncRoomMessages(id);
+                // HARD REFRESH on reconnect
+                hardRefreshRoomMessages(id);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                 if (state.connectionTimeoutTimer) { clearTimeout(state.connectionTimeoutTimer); state.connectionTimeoutTimer = null; }
                 if (!state.isOfflineMode && !state.isCapacityBlocked) {
@@ -1219,7 +1099,6 @@ export function initHRNchat(customConfig = {}) {
     window.saveRoomSettings = async (e) => { if (!e || !e.isTrusted) return; if (state.processingAction) return; state.processingAction = true; const name = $('edit-room-name').value.trim(); const isVisible = $('edit-room-visible').checked; const newPass = $('edit-room-pass').value; let allowedUsers = state.selectedAllowedUsers.length > 0 ? state.selectedAllowedUsers.map(u => u.id) : ['*']; if (!allowedUsers.includes(state.user.id)) allowedUsers.push(state.user.id); if (!name) { window.toast("Name required."); state.processingAction = false; return; } const room = state.currentRoomData; const isChangingPass = newPass.length > 0; const isRemovingPass = state.removePasswordFlag; window.setLoading(true, "Saving..."); const updates = { name, is_visible: isVisible, allowed_users: allowedUsers }; if (isRemovingPass) updates.has_password = false; else if (isChangingPass) updates.has_password = true; const { error: updateError } = await db.from('rooms').update(updates).eq('id', state.currentRoomId); if (updateError) { window.toast("Save failed."); window.setLoading(false); state.processingAction = false; return; } if (isRemovingPass) { await db.rpc('set_room_password', { p_room_id: state.currentRoomId, p_hash: null }); state.currentRoomData.has_password = false; } else if (isChangingPass) { const roomSalt = state.currentRoomData.salt; const accessHash = await sha256(newPass + roomSalt); await db.rpc('set_room_password', { p_room_id: state.currentRoomId, p_hash: accessHash }); state.currentRoomData.has_password = true; } const { data: updatedRoom } = await db.from('rooms').select('*').eq('id', state.currentRoomId).single(); state.currentRoomData = updatedRoom; state.currentRoomDisplay = await resolveRoomDisplay(updatedRoom); $('chat-title').innerText = state.currentRoomDisplay.name; window.toast("Saved."); window.closeOverlay(); state.processingAction = false; window.setLoading(false); };
     window.deleteRoom = async () => { if (!state.currentRoomId) return; window.setLoading(true, "Deleting..."); const { error } = await db.from('rooms').delete().eq('id', state.currentRoomId); if (error) { window.toast("Delete failed."); window.setLoading(false); return; } window.toast("Deleted."); state.currentRoomId = null; state.currentRoomData = null; window.closeOverlay(); window.nav('scr-lobby'); window.loadRooms(); window.setLoading(false); };
     
-    // --- UPDATED FUNCTION: OPEN VAULT ---
     window.openVault = async (id, n, rawPassword, roomSalt, cachedData = null) => {
         if (!state.user) return window.toast("Please log in.");
         if (state.isCapacityBlocked) return;
@@ -1237,11 +1116,9 @@ export function initHRNchat(customConfig = {}) {
         
         let roomData = cachedData;
 
-        // --- OFFLINE MODE LOGIC ---
         if (state.isOfflineMode) {
              if (!roomData || !roomData.allowed_users) roomData = await localDB.get('rooms', id);
              if (!roomData) { window.setLoading(false); return window.toast("Chat not found locally."); }
-             
              state.currentRoomData = roomData;
              const isDirect = roomData?.is_direct;
              state.currentRoomDisplay = await resolveRoomDisplay(roomData);
@@ -1249,15 +1126,11 @@ export function initHRNchat(customConfig = {}) {
              const avEl = $('chat-avatar-display');
              if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`;
              else avEl.innerText = state.currentRoomDisplay.name.charAt(0).toUpperCase();
-             
              const editBtn = $('info-edit-btn');
              if (!isDirect && roomData?.created_by === state.user.id) editBtn.style.display = 'flex';
              else editBtn.style.display = 'none';
-             
              const keySource = rawPassword ? (rawPassword + id) : id;
              await deriveKey(keySource, roomData?.salt, id);
-             
-             // Render Local Messages
              let localMessages = await localDB.getRoomMessages(id);
              let renderedHtml = '';
              if (localMessages.length > 0) {
@@ -1266,29 +1139,25 @@ export function initHRNchat(customConfig = {}) {
                  chatContainer.innerHTML = renderedHtml;
                  chatContainer.scrollTop = chatContainer.scrollHeight;
              }
-             
              checkChatEmpty();
              $('chat-input').style.display = 'block';
              $('send-btn').style.display = 'flex';
              setConnectionVisuals('offline');
              window.nav('scr-chat');
              window.setLoading(false);
-             return; // Stop here for offline
+             return;
         }
 
-        // --- ONLINE MODE LOGIC ---
-        // 1. Fetch fresh Room Data
+        // Online Logic
         try {
-            const { data: netRoom } = await db.from('rooms').select('*').eq('id', id).single();
+            const { data: netRoom } = await execQuery(db.from('rooms').select('*').eq('id', id).single());
             if (netRoom && netRoom.id) {
                 roomData = netRoom;
-                await localDB.put('rooms', roomData); // Update cache
+                await localDB.put('rooms', roomData);
             }
         } catch (e) { /* Ignore if fails, proceed with passed data */ }
 
-        if (!roomData) {
-             window.setLoading(false); return window.toast("Chat not found.");
-        }
+        if (!roomData) { window.setLoading(false); return window.toast("Chat not found."); }
         
         state.currentRoomData = roomData;
         const isDirect = roomData?.is_direct;
@@ -1297,53 +1166,40 @@ export function initHRNchat(customConfig = {}) {
         const avEl = $('chat-avatar-display');
         if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`;
         else avEl.innerText = state.currentRoomDisplay.name.charAt(0).toUpperCase();
-        
         const editBtn = $('info-edit-btn');
         if (!isDirect && roomData?.created_by === state.user.id) editBtn.style.display = 'flex';
         else editBtn.style.display = 'none';
-
         const keySource = rawPassword ? (rawPassword + id) : id;
         await deriveKey(keySource, roomData?.salt, id);
 
-        // 2. Fetch fresh Messages
         let finalMessages = [];
         try {
-            const { data } = await db.from('messages').select('*').eq('room_id', id).order('created_at', { ascending: false }).limit(CONFIG.maxMessages);
+            // Cache Busting: Timestamp in header not directly supported, but we force a clean fetch
+            const { data } = await execQuery(db.from('messages').select('*').eq('room_id', id).order('created_at', { ascending: false }).limit(CONFIG.maxMessages));
             if (data && data.length > 0) {
                 data.reverse();
                 const res = await workerExec('decryptHistory', { messages: data, keyId: id });
                 const validMsgs = res.results.filter(m => !m.error);
-                
-                // 3. Override Local Cache
                 await localDB.clearRoomMessages(id);
                 const messagesWithRoomId = validMsgs.map(m => ({ ...m, room_id: id }));
                 await localDB.putAll('messages', messagesWithRoomId);
-                
                 finalMessages = validMsgs;
-            } else {
-                // No messages on server, clear local
-                await localDB.clearRoomMessages(id);
-            }
+            } else { await localDB.clearRoomMessages(id); }
         } catch (e) { console.error("Fetch error", e); }
 
         window.nav('scr-chat');
-        
-        // 4. Render Server Messages
         if (finalMessages.length > 0) {
             state.oldestMessageTimestamp = finalMessages[0].created_at;
             let html = '', prev = null;
             finalMessages.forEach(m => { html += renderMsg(m, prev, isDirect); prev = m; });
             chatContainer.innerHTML = html;
         }
-
         checkChatEmpty();
         $('chat-input').style.display = 'block';
         $('send-btn').style.display = 'flex';
-        
-        setConnectionVisuals('connecting'); // Will turn green on subscribe
+        setConnectionVisuals('connecting');
         await initRoomPresence(id);
         await setupChatChannel(id);
-        
         setTimeout(() => { chatContainer.scrollTop = chatContainer.scrollHeight; window.setLoading(false); }, 100);
     };
     
@@ -1366,12 +1222,9 @@ export function initHRNchat(customConfig = {}) {
     window.nav = (id, direction = null) => { if (state.isNavigating) return; state.isNavigating = true; requestAnimationFrame(() => { const current = document.querySelector('.screen.active'); const next = $(id); if (!next) { state.isNavigating = false; return; } if (id === 'scr-create') { state.currentStep.create = 1; state.selectedAllowedUsers = []; state.createType = 'group'; updateStepUI('create'); $('c-name').value = ''; $('c-target-user').value = ''; $('c-pass').value = ''; $('c-avatar').value = ''; document.querySelectorAll('.type-card').forEach(el => el.classList.remove('selected')); $('type-group').classList.add('selected'); } if (id === 'scr-register') { state.currentStep.reg = 1; state.selectedAvatar = null; $('r-name').value = ''; $('r-email').value = ''; $('r-pass').value = ''; $('r-avatar-url').value = ''; updateStepUI('reg'); } if (id === 'scr-account') window.prepareAccountPage(); document.querySelectorAll('.screen').forEach(s => s.classList.remove('slide-left', 'slide-right')); if (direction === 'left') { if (current) current.classList.add('slide-left'); next.classList.remove('slide-right'); } else if (direction === 'right') { if (current) current.classList.add('slide-right'); next.classList.remove('slide-left'); } else { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); } document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); next.classList.add('active'); const createBtn = $('icon-plus-lobby'); if (createBtn) createBtn.style.display = 'flex'; if (id === 'scr-lobby') updateLobbyAvatar(); setTimeout(() => { state.isNavigating = false; }, 400); }); };
     window.refreshLobby = async () => { const now = Date.now(); if (now - state.lastLobbyRefresh < 10000) return window.toast("Please wait."); state.lastLobbyRefresh = now; await window.loadRooms(); };
 
-    // --- UPDATED FUNCTION: LOAD ROOMS ---
     window.loadRooms = async () => {
         if (!state.user) return;
         const uid = state.user.id;
-
-        // Helper to process and render
         const processAndRender = async (rooms) => {
             const processed = [];
             for (const r of rooms) {
@@ -1383,7 +1236,6 @@ export function initHRNchat(customConfig = {}) {
             window.filterRooms();
         };
 
-        // OFFLINE MODE: Use Local DB only
         if (state.isOfflineMode) {
             const localRooms = await localDB.getAll('rooms');
             await processAndRender(localRooms);
@@ -1391,27 +1243,20 @@ export function initHRNchat(customConfig = {}) {
             return;
         }
 
-        // ONLINE MODE: Fetch Server -> Override Local -> Render
         window.setLoading(true, "Syncing...");
         try {
-            const { data: rooms, error } = await db.from('rooms').select('*').order('created_at', { ascending: false });
+            // Hard Refresh: Fetch and Override
+            const { data: rooms, error } = await execQuery(
+                db.from('rooms').select('*').order('created_at', { ascending: false })
+            );
             
             if (error) throw error;
 
             if (rooms) {
-                // 1. Clear local rooms
                 await localDB.clear('rooms');
-                
-                // 2. Save fresh server data
                 if (rooms.length > 0) await localDB.putAll('rooms', rooms);
-                
-                // 3. Save user tree reference
                 await localDB.saveUserTree(uid, rooms);
-                
-                // 4. Render fresh data
                 await processAndRender(rooms);
-                
-                // Update avatars in background
                 warmUpRoomImageCache();
             }
         } catch (e) {
@@ -1423,8 +1268,8 @@ export function initHRNchat(customConfig = {}) {
     };
 
     window.filterRooms = () => { const q = $('search-bar').value.toLowerCase(); const list = $('room-list'); const uid = state.user?.id; const filtered = state.allRooms.filter(r => { if (!r.is_direct && !r.is_visible) return false; const name = r.display_name || r.name || ''; if (!name.toLowerCase().includes(q)) return false; return true; }); if (filtered.length === 0) { list.innerHTML = ""; } else list.innerHTML = filtered.map(r => `<div class="room-card" onclick="window.joinAttempt('${r.id}')"><div class="chat-avatar" style="width:36px;height:36px;margin-right:10px;font-size:13px">${r.display_avatar ? `<img src="${r.display_avatar}">` : (r.display_name||'G').charAt(0)}</div><span class="room-name">${esc(r.display_name)}</span><span class="room-icon">${r.is_direct ? '<i data-lucide="user" style="width:14px;height:14px"></i>' : ''}${r.has_password ? '<i data-lucide="lock" style="width:14px;height:14px"></i>' : ''}</span></div>`).join(''); };
-    window.joinAttempt = async (id) => { const meta = await localDB.get('rooms', id); const openLocal = async () => { if (meta && meta.id) { state.pending = { id: meta.id, name: meta.name, salt: meta.salt }; if (meta.has_password) { window.nav('scr-gate'); } else { await window.openVault(meta.id, meta.name, null, meta.salt, meta); } } else { window.toast("Chat not found."); } }; if (state.isOfflineMode) { await openLocal(); return; } window.setLoading(true, "Accessing..."); try { const { data: canAccess, error: rpcError } = await db.rpc('can_access_room', { p_room_id: id }); if (rpcError) throw rpcError; if (!canAccess) throw new Error("Access denied"); const { data, error } = await db.from('rooms').select('*').eq('id', id).single(); if (error) throw error; window.setLoading(false); if (data && data.id) await localDB.put('rooms', data); state.pending = { id: data.id, name: data.name, salt: data.salt }; if (data.has_password) window.nav('scr-gate'); else window.openVault(data.id, data.name, null, data.salt, data); } catch (e) { window.setLoading(false); window.toast("Connection lost."); setAppMode(true); await openLocal(); } };
-    window.joinPrivate = async () => { if (!state.user) return window.toast("Please log in."); const id = $('join-id').value.trim(); if (!id) return; if (state.isOfflineMode) { const meta = await localDB.get('rooms', id); if (meta) window.joinAttempt(id); else window.toast("Connection required."); return; } window.setLoading(true, "Checking..."); try { const { data: canAccess } = await db.rpc('can_access_room', { p_room_id: id }); if (!canAccess) { window.setLoading(false); return window.toast("Access denied."); } const { data } = await db.from('rooms').select('*').eq('id', id).single(); window.setLoading(false); if (data) { await localDB.put('rooms', data); state.pending = { id: data.id, name: data.name, salt: data.salt }; if (data.has_password) window.nav('scr-gate'); else window.openVault(data.id, data.name, null, data.salt, data); } else window.toast("Chat not found."); } catch (e) { window.setLoading(false); window.toast("Network error."); } };
+    window.joinAttempt = async (id) => { const meta = await localDB.get('rooms', id); const openLocal = async () => { if (meta && meta.id) { state.pending = { id: meta.id, name: meta.name, salt: meta.salt }; if (meta.has_password) { window.nav('scr-gate'); } else { await window.openVault(meta.id, meta.name, null, meta.salt, meta); } } else { window.toast("Chat not found."); } }; if (state.isOfflineMode) { await openLocal(); return; } window.setLoading(true, "Accessing..."); try { const { data: canAccess, error: rpcError } = await execQuery(db.rpc('can_access_room', { p_room_id: id })); if (rpcError) throw rpcError; if (!canAccess) throw new Error("Access denied"); const { data, error } = await execQuery(db.from('rooms').select('*').eq('id', id).single()); if (error) throw error; window.setLoading(false); if (data && data.id) await localDB.put('rooms', data); state.pending = { id: data.id, name: data.name, salt: data.salt }; if (data.has_password) window.nav('scr-gate'); else window.openVault(data.id, data.name, null, data.salt, data); } catch (e) { window.setLoading(false); window.toast("Connection lost."); setAppMode(true); await openLocal(); } };
+    window.joinPrivate = async () => { if (!state.user) return window.toast("Please log in."); const id = $('join-id').value.trim(); if (!id) return; if (state.isOfflineMode) { const meta = await localDB.get('rooms', id); if (meta) window.joinAttempt(id); else window.toast("Connection required."); return; } window.setLoading(true, "Checking..."); try { const { data: canAccess } = await execQuery(db.rpc('can_access_room', { p_room_id: id })); if (!canAccess) { window.setLoading(false); return window.toast("Access denied."); } const { data } = await execQuery(db.from('rooms').select('*').eq('id', id).single()); window.setLoading(false); if (data) { await localDB.put('rooms', data); state.pending = { id: data.id, name: data.name, salt: data.salt }; if (data.has_password) window.nav('scr-gate'); else window.openVault(data.id, data.name, null, data.salt, data); } else window.toast("Chat not found."); } catch (e) { window.setLoading(false); window.toast("Network error."); } };
     const init = async () => {
         await localDB.init();
         monitorConnection();
