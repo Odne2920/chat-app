@@ -1,32 +1,15 @@
 /* 
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
- *  Version: 1.0.5-debug
+ *  Version: 1.0.5
  *  assets/logic.js 
  *  MIT License
  *  GH: HyperRushNet & hrn-chat
- *  
- *  *** DEBUG BUILD ***
- *  Deze versie toont uitgebreide logs op het scherm en in de console.
  */
 import {
     createClient
 }
 from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
-
-// --- DEBUG HELPER ---
-const debugLog = (step, message, isError = false) => {
-    const prefix = `[DEBUG ${step}]`;
-    if (isError) {
-        console.error(prefix, message);
-        window.toast(`❌ ${step}: ${message}`);
-    } else {
-        console.log(prefix, message);
-        // Optioneel: comment de volgende regel uit als je alleen console logs wilt
-        window.toast(`✅ ${step}: ${message}`);
-    }
-};
-
 export function initHRNchat(customConfig = {}) {
     const CONFIG = {
         supabaseUrl: customConfig.supabaseUrl || "https://jnhsuniduzvhkpexorqk.supabase.co",
@@ -43,7 +26,7 @@ export function initHRNchat(customConfig = {}) {
         requestTimeout: 3000
     };
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
-    const DB_NAME = 'HRN_LOCAL_DB_3';
+    const DB_NAME = 'HRN_LOCAL_DB_4';
     const DB_VERSION = 1;
     const MASTER_LOCK_KEY = 'hrn_master_lock';
     const TAB_ID_KEY = 'hrn_tab_id';
@@ -145,19 +128,13 @@ export function initHRNchat(customConfig = {}) {
         db: null,
         async init() {
             return new Promise((resolve, reject) => {
-                debugLog("IDB", "Opening database...");
                 const request = indexedDB.open(DB_NAME, DB_VERSION);
-                request.onerror = (e) => {
-                    debugLog("IDB", "Error opening DB: " + request.error, true);
-                    reject(request.error);
-                };
+                request.onerror = (e) => reject(request.error);
                 request.onsuccess = () => {
                     this.db = request.result;
-                    debugLog("IDB", "Database opened successfully");
                     resolve();
                 };
                 request.onupgradeneeded = (e) => {
-                    debugLog("IDB", "Upgrade needed...");
                     const db = e.target.result;
                     const tx = e.target.transaction;
                     if (!db.objectStoreNames.contains('rooms')) db.createObjectStore('rooms', {
@@ -906,7 +883,6 @@ export function initHRNchat(customConfig = {}) {
         }
     };
     const attemptLogin = async (email, pass) => {
-        debugLog("Auth", "Attempting login...");
         try {
             const {
                 error
@@ -916,46 +892,32 @@ export function initHRNchat(customConfig = {}) {
             }));
             if (error) throw error;
         } catch (e) {
-            debugLog("Auth", "Login failed: " + e.message, true);
             return false;
         }
         state.loginRetryCount = 0;
-        
-        try {
-            debugLog("Auth", "Getting user data...");
-            const { data, error } = await db.auth.getUser();
-            if (error || !data?.user) {
-                debugLog("Auth", "Get user failed", true);
-                return false;
+        const {
+            data: {
+                user
             }
-            state.user = data.user;
-            debugLog("Auth", "User data OK");
-        } catch (e) {
-            debugLog("Auth", "Get user crash: " + e.message, true);
-            return false;
-        }
-
-        if (state.user) {
+        } = await db.auth.getUser();
+        state.user = user;
+        if (user) {
             const profileData = {
-                id: state.user.id,
-                full_name: state.user.user_metadata?.full_name,
-                avatar_url: state.user.user_metadata?.avatar_url,
+                id: user.id,
+                full_name: user.user_metadata?.full_name,
+                avatar_url: user.user_metadata?.avatar_url,
                 updated_at: new Date().toISOString()
             };
             await cacheAvatar(profileData);
         }
         const hashInput = await sha256(pass + email);
-        try {
-            await localDB.put('known_users', {
-                id: email,
-                pass_hash: hashInput,
-                email: email,
-                metadata: state.user.user_metadata,
-                userId: state.user.id
-            });
-        } catch(e) {
-            debugLog("Storage", "Could not save known user: " + e.message, true);
-        }
+        await localDB.put('known_users', {
+            id: email,
+            pass_hash: hashInput,
+            email: email,
+            metadata: user.user_metadata,
+            userId: user.id
+        });
         return true;
     };
     
@@ -965,8 +927,6 @@ export function initHRNchat(customConfig = {}) {
         state.isCapacityBlocked = false;
         const overlay = $('block-overlay');
         if (overlay) overlay.classList.remove('active');
-        
-        debugLog("Net", "Going online...");
         
         if (state.user) {
             const storedEmail = localStorage.getItem('hrn_auth_email');
@@ -996,33 +956,27 @@ export function initHRNchat(customConfig = {}) {
             window.setLoading(true, "Connecting...");
         }
         
-        try {
-            const storedEmail = localStorage.getItem('hrn_auth_email');
-            const storedPass = localStorage.getItem('hrn_auth_pass');
-            
-            if (storedEmail && storedPass) {
-                const success = await attemptLogin(storedEmail, storedPass);
-                if (success) {
-                    setAppMode(false);
-                    setupGlobalPresence(state.user.id);
-                    window.nav('scr-lobby');
-                    window.loadRooms();
-                    window.toast("Connected.");
-                } else {
-                    window.toast("Connection failed.");
-                    setAppMode(true);
-                }
+        const storedEmail = localStorage.getItem('hrn_auth_email');
+        const storedPass = localStorage.getItem('hrn_auth_pass');
+        
+        if (storedEmail && storedPass) {
+            const success = await attemptLogin(storedEmail, storedPass);
+            if (success) {
+                setAppMode(false);
+                setupGlobalPresence(state.user.id);
+                window.nav('scr-lobby');
+                window.loadRooms();
+                window.toast("Connected.");
             } else {
-                if (isAuthScreen) window.setLoading(false);
-                else {
-                    window.toast("No saved login found.");
-                    setAppMode(true);
-                }
+                window.toast("Connection failed.");
             }
-        } catch (err) {
-            debugLog("Net", "goOnline Crash: " + err.message, true);
-            window.toast("An error occurred.");
             if (isAuthScreen) window.setLoading(false);
+        } else {
+            if (isAuthScreen) window.setLoading(false);
+            else {
+                window.toast("No saved login found.");
+                setAppMode(true);
+            }
         }
     };
 
@@ -1617,34 +1571,21 @@ export function initHRNchat(customConfig = {}) {
         updatePresenceUI();
     };
     const startTabSync = () => {
-        debugLog("TabSync", "Starting tab sync...");
         state.isMasterTab = true;
-        try {
-            localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() }));
-        } catch(e) {
-            debugLog("TabSync", "LocalStorage access denied", true);
-            // We gaan door, maar tab sync werkt mogelijk niet
-        }
+        localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() }));
 
         if (state.tabSyncInterval) clearInterval(state.tabSyncInterval);
         const tick = () => {
             const now = Date.now();
-            let masterLock = null;
-            try {
-                 masterLock = localStorage.getItem(MASTER_LOCK_KEY);
-            } catch(e) {
-                // LocalStorage niet beschikbaar
-                return;
-            }
-           
+            const masterLock = localStorage.getItem(MASTER_LOCK_KEY);
             let lockData = null;
             try { if (masterLock) lockData = JSON.parse(masterLock); } catch (e) {}
 
             if (lockData && lockData.id === state.tabId) {
-                try { localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now })); } catch(e) {}
+                localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now }));
                 state.isMasterTab = true;
             } else if (!lockData || now - lockData.ts > 5000) {
-                try { localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now })); } catch(e) {}
+                localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now }));
                 state.isMasterTab = true;
             } else {
                 if (state.isMasterTab) {
@@ -1657,32 +1598,14 @@ export function initHRNchat(customConfig = {}) {
     };
 
     const init = async () => {
-        debugLog("Init", "Start initialisatie...");
-        try {
-            debugLog("Init", "Step 1: Local DB");
-            await localDB.init(); // Als dit faalt, vangen we het hieronder af
-        } catch (e) {
-            debugLog("Init", "IndexedDB fout: " + e.message, true);
-        }
-
-        debugLog("Init", "Step 2: Monitor Connection");
+        await localDB.init();
         monitorConnection();
-        
-        debugLog("Init", "Step 3: Tab Sync");
-        try {
-            startTabSync();
-        } catch(e) {
-            debugLog("Init", "Tab sync fout: " + e.message, true);
-        }
+        startTabSync();
 
-        debugLog("Init", "Step 4: Navigate Start");
         window.nav('scr-start');
-        
-        debugLog("Init", "Step 5: Set Loading False");
         window.setLoading(false);
 
         if (navigator.onLine) {
-            debugLog("Init", "Step 6: Warming up caches");
             warmUpAvatarCache();
             warmUpRoomImageCache();
         }
@@ -1691,16 +1614,12 @@ export function initHRNchat(customConfig = {}) {
         const storedPass = localStorage.getItem('hrn_auth_pass');
 
         if (navigator.onLine && storedEmail && storedPass) {
-            debugLog("Init", "Step 7: Auto Login");
-            await window.goOnline();
-        } else {
-            debugLog("Init", "Step 7: No auto login (offline or no creds)");
+             await window.goOnline();
         }
-        debugLog("Init", "Initialisatie voltooid");
     };
     
     window.forceClaimMaster = () => {
-        try { localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() })); } catch(e) {}
+        localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() }));
         startTabSync();
     };
     window.openOverlay = () => {
@@ -2750,6 +2669,7 @@ export function initHRNchat(customConfig = {}) {
                 data,
                 error
             } = await execQuery(db.from('rooms').select('*').eq('id', id).single());
+            if (error) throw error;
             window.setLoading(false);
             if (data && data.id) await localDB.put('rooms', data);
             state.pending = {
@@ -2806,6 +2726,6 @@ export function initHRNchat(customConfig = {}) {
             window.toast("Network error.");
         }
     };
-    
+   
     init();
 }
