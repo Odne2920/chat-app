@@ -1,4 +1,5 @@
-/*
+javascript
+/* 
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
  *  Version: 1.0.5
@@ -1543,7 +1544,8 @@ export function initHRNchat(customConfig = {}) {
         };
         tabChannel.addEventListener('message', handler);
         tabChannel.postMessage({
-            type: 'PING_MASTER'
+            type: 'PING_MASTER',
+            id: state.tabId
         });
         setTimeout(() => {
             tabChannel.removeEventListener('message', handler);
@@ -1552,7 +1554,14 @@ export function initHRNchat(customConfig = {}) {
     });
     const handleDuplicateTab = () => {
         const overlay = $('block-overlay');
-        if (overlay) overlay.classList.add('active');
+        if (overlay) {
+            overlay.innerHTML = `
+                <i data-lucide="copy" style="width:48px;height:48px;margin-bottom:24px;color:var(--warning)"></i>
+                <h1 style="margin-bottom: 20px" class="title">Duplicate Tab</h1>
+                <p class="subtitle" style="text-align:center">This tab is inactive to prevent sync issues.<br>Switch tabs to make it active.</p>
+            `;
+            overlay.classList.add('active');
+        }
         cleanupChannels(false);
         if (state.globalPresenceChannel) {
             state.globalPresenceChannel.unsubscribe();
@@ -1577,21 +1586,44 @@ export function initHRNchat(customConfig = {}) {
         }
     };
     tabChannel.onmessage = (ev) => {
-        if (ev.data.type === 'CLAIM_MASTER' && ev.data.id !== state.tabId) {
+        const {
+            type,
+            id
+        } = ev.data;
+        if (type === 'CLAIM_MASTER' && id !== state.tabId) {
             if (state.isMasterTab) {
-                handleDuplicateTab();
+                if (id > state.tabId) {
+                    handleDuplicateTab();
+                } else {
+                    tabChannel.postMessage({
+                        type: 'CLAIM_MASTER',
+                        id: state.tabId
+                    });
+                }
             }
         }
-        if (ev.data.type === 'PING_MASTER') {
-            if (state.isMasterTab) tabChannel.postMessage({
-                type: 'PONG_MASTER'
+        if (type === 'PING_MASTER') {
+            if (state.isMasterTab) {
+                tabChannel.postMessage({
+                    type: 'PONG_MASTER',
+                    id: state.tabId
+                });
+            }
+        }
+        if (type === 'ABDICATE') {
+            if (!state.isMasterTab) {
+                window.forceClaimMaster();
+            }
+        }
+    };
+    const beforeUnloadHandler = () => {
+        if (state.isMasterTab) {
+            tabChannel.postMessage({
+                type: 'ABDICATE',
+                id: state.tabId
             });
         }
     };
-    const beforeUnloadHandler = () => tabChannel.postMessage({
-        type: 'CLAIM_MASTER',
-        id: state.tabId
-    });
     window.addEventListener('beforeunload', beforeUnloadHandler);
     window.openOverlay = () => {
         const oc = $('overlay-container');
