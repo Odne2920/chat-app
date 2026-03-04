@@ -1,7 +1,7 @@
 /*
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
- *  Version: 1.0.10
+ *  Version: 1.0.5
  *  assets/logic.js 
  *  MIT License
  *  GH: HyperRushNet & hrn-chat
