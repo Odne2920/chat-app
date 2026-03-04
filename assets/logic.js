@@ -1,7 +1,7 @@
 /*
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
- *  Version: 1.0.5
+ *  Version: 1.0.6
  *  assets/logic.js 
  *  MIT License
  *  GH: HyperRushNet & hrn-chat
@@ -76,6 +76,7 @@ export function initHRNchat(customConfig = {}) {
         isReconnecting: false,
         deleteConfirmTimeout: null,
         profileCache: {},
+        roomImageCache: {}, // Simple in-memory cache for room images during session
         editingMessage: null,
         contextTarget: null,
         carouselIndex: 0,
@@ -393,23 +394,18 @@ export function initHRNchat(customConfig = {}) {
         }
     };
     
-    // Updated cacheAvatar function: Crops to 200x200 square
-    const cacheAvatar = async (profile) => {
-        if (!profile || !profile.avatar_url) return profile;
-        if (profile.avatar_url.startsWith('data:')) {
-            profile.cached_avatar = profile.avatar_url;
-            return profile;
-        }
+    // Centralized Image Processing Helper
+    const processImageToCache = async (url) => {
+        if (!url || url.startsWith('data:')) return url;
         try {
-            const response = await fetch(CONFIG.proxyUrl + profile.avatar_url);
+            const response = await fetch(CONFIG.proxyUrl + url);
             if (!response.ok) throw new Error("Invalid image response");
             const blob = await response.blob();
             return new Promise((resolve) => {
                 const img = new Image();
                 const blobUrl = URL.createObjectURL(blob);
                 img.onload = async () => {
-                    URL.revokeObjectURL(blobUrl); // Clean up memory
-                    
+                    URL.revokeObjectURL(blobUrl); 
                     const canvas = document.createElement('canvas');
                     const size = 200; // Fixed size 200x200
                     canvas.width = size;
@@ -422,21 +418,62 @@ export function initHRNchat(customConfig = {}) {
                     const y = (size - img.height * scale) / 2;
 
                     ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
-
-                    profile.cached_avatar = canvas.toDataURL('image/jpeg', 0.85);
-                    await localDB.put('profiles', profile);
-                    state.profileCache[profile.id] = profile;
-                    resolve(profile);
+                    resolve(canvas.toDataURL('image/jpeg', 0.85));
                 };
                 img.onerror = () => {
                     URL.revokeObjectURL(blobUrl);
-                    resolve(profile);
+                    resolve(null);
                 };
                 img.src = blobUrl;
             });
         } catch (e) {
+            return null;
+        }
+    };
+
+    // Profile Avatar Caching
+    const cacheAvatar = async (profile) => {
+        if (!profile || !profile.avatar_url) return profile;
+        if (profile.avatar_url.startsWith('data:')) {
+            profile.cached_avatar = profile.avatar_url;
             return profile;
         }
+        // Check if already cached in memory/IDB
+        if(profile.cached_avatar) return profile;
+
+        const dataUrl = await processImageToCache(profile.avatar_url);
+        if (dataUrl) {
+            profile.cached_avatar = dataUrl;
+            await localDB.put('profiles', profile);
+            state.profileCache[profile.id] = profile;
+        }
+        return profile;
+    };
+
+    // Room Avatar Caching
+    const cacheRoomImage = async (room) => {
+        if (!room || !room.avatar_url || room.avatar_url.startsWith('data:')) return room;
+        // If already cached in the room object, skip
+        if (room.cached_avatar) return room;
+
+        const dataUrl = await processImageToCache(room.avatar_url);
+        if (dataUrl) {
+            room.cached_avatar = dataUrl;
+            // Save back to IDB rooms store
+            const dbRoom = await localDB.get('rooms', room.id);
+            if (dbRoom) {
+                dbRoom.cached_avatar = dataUrl;
+                await localDB.put('rooms', dbRoom);
+            }
+            state.roomImageCache[room.id] = dataUrl;
+            
+            // Optional: Trigger UI update if this room is currently displayed
+            if (state.currentRoomId === room.id) {
+                 const avEl = $('chat-avatar-display');
+                 if(avEl) avEl.innerHTML = `<img src="${dataUrl}">`;
+            }
+        }
+        return room;
     };
 
     const warmUpAvatarCache = async () => {
@@ -452,6 +489,22 @@ export function initHRNchat(customConfig = {}) {
         });
         await Promise.all(promises);
     };
+
+    // Warm up Room Images on init/sync
+    const warmUpRoomImageCache = async () => {
+        if (state.isOfflineMode) return;
+        const rooms = await localDB.getAll('rooms');
+        if (!rooms || rooms.length === 0) return;
+
+        const promises = rooms.map(async (r) => {
+            if (r.avatar_url && !r.avatar_url.startsWith('data:') && !r.cached_avatar) {
+                return cacheRoomImage(r);
+            }
+            return Promise.resolve();
+        });
+        await Promise.all(promises);
+    };
+
     const getProfile = async (userId) => {
         if (!userId) return null;
         if (state.profileCache[userId]) return state.profileCache[userId];
@@ -499,7 +552,14 @@ export function initHRNchat(customConfig = {}) {
             avatar: null
         };
         if (!room.is_direct) {
-            const avatar = (!state.isOfflineMode || (room.avatar_url && room.avatar_url.startsWith('data:'))) ? room.avatar_url : null;
+            // Priority: Cached Avatar > Data URL > Network URL
+            let avatar = room.cached_avatar || (room.avatar_url && room.avatar_url.startsWith('data:') ? room.avatar_url : null);
+            
+            // If we have a remote URL and no cache, try to cache it in background
+            if (!avatar && room.avatar_url && !state.isOfflineMode) {
+                cacheRoomImage(room); // Fire and forget update
+            }
+            
             return {
                 name: room.name,
                 avatar: avatar
@@ -1319,7 +1379,6 @@ export function initHRNchat(customConfig = {}) {
         updateCarouselPreview();
     };
     
-    // Updated handleAvatarUpload: Crops to 200x200 square
     window.handleAvatarUpload = (event) => {
         const file = event.target.files[0];
         if (file) {
@@ -1328,12 +1387,11 @@ export function initHRNchat(customConfig = {}) {
                 const img = new Image();
                 img.onload = () => {
                     const canvas = document.createElement('canvas');
-                    const size = 200; // Fixed size 200x200
+                    const size = 200;
                     canvas.width = size;
                     canvas.height = size;
                     const ctx = canvas.getContext('2d');
 
-                    // Center crop logic
                     const scale = Math.max(size / img.width, size / img.height);
                     const x = (size - img.width * scale) / 2;
                     const y = (size - img.height * scale) / 2;
@@ -1565,7 +1623,7 @@ export function initHRNchat(customConfig = {}) {
             data: profile
         } = await db.from('profiles').select('avatar_url, full_name').eq('id', state.user.id).single();
         const name = profile?.full_name || state.user.user_metadata?.full_name || "User";
-        const avatar = profile?.avatar_url || state.user.user_metadata?.avatar_url;
+        const avatar = profile?.cached_avatar || profile?.avatar_url || state.user.user_metadata?.avatar_url;
         $('acc-page-name').innerText = name;
         $('acc-page-type').innerText = "Full Account";
         $('acc-page-id').innerText = state.user.id;
@@ -1596,7 +1654,7 @@ export function initHRNchat(customConfig = {}) {
                 data
             } = await db.from('profiles').select('avatar_url, full_name').eq('id', state.user.id).single();
             if (data) {
-                avatar = data.avatar_url;
+                avatar = data.cached_avatar || data.avatar_url;
                 name = data.full_name;
             }
         }
@@ -2354,6 +2412,12 @@ export function initHRNchat(customConfig = {}) {
                     p_hash: accessHash
                 });
             }
+            // Immediately cache the new room's avatar if we have one
+            if(avatarUrl && !avatarUrl.startsWith('data:')) {
+                // Since we just created it, we can assign the cached_avatar immediately if it was processed
+                // processAvatarUrl returns base64 usually
+            }
+            
             await localDB.put('rooms', newRoom);
             state.lastCreated = newRoom;
             state.lastCreatedPass = rawPass;
@@ -2406,46 +2470,9 @@ export function initHRNchat(customConfig = {}) {
         window.toast("ID copied.");
     };
 
-    // Updated processAvatarUrl: Crops to 200x200 square
     const processAvatarUrl = async (url) => {
         if (!url || url.startsWith('data:')) return url;
-
-        try {
-            const response = await fetch(CONFIG.proxyUrl + url);
-            if (!response.ok) return url;
-
-            const blob = await response.blob();
-
-            return new Promise((resolve) => {
-                const img = new Image();
-                const blobUrl = URL.createObjectURL(blob);
-                img.onload = () => {
-                    URL.revokeObjectURL(blobUrl);
-                    const canvas = document.createElement('canvas');
-                    const size = 200; // Fixed size 200x200
-                    canvas.width = size;
-                    canvas.height = size;
-                    const ctx = canvas.getContext('2d');
-
-                    // Center crop logic
-                    const scale = Math.max(size / img.width, size / img.height);
-                    const x = (size - img.width * scale) / 2;
-                    const y = (size - img.height * scale) / 2;
-
-                    ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
-
-                    resolve(canvas.toDataURL('image/jpeg', 0.85));
-                };
-                img.onerror = () => {
-                    URL.revokeObjectURL(blobUrl);
-                    resolve(url);
-                };
-                img.src = blobUrl;
-            });
-        } catch (err) {
-            console.warn("Avatar processing failed", err);
-            return url;
-        }
+        return await processImageToCache(url);
     };
 
     window.enterCreated = () => {
@@ -2567,11 +2594,25 @@ export function initHRNchat(customConfig = {}) {
             return;
         }
         if (rooms && rooms.length > 0) {
+            // Merge server data with local cache
+            const mergedRooms = rooms.map(serverRoom => {
+                const localRoom = localRooms.find(lr => lr.id === serverRoom.id);
+                // Keep cached_avatar if URL hasn't changed
+                if (localRoom && localRoom.avatar_url === serverRoom.avatar_url && localRoom.cached_avatar) {
+                    serverRoom.cached_avatar = localRoom.cached_avatar;
+                }
+                return serverRoom;
+            });
+
             await localDB.clear('rooms');
-            await localDB.putAll('rooms', rooms);
-            state.allRooms = await processRooms(rooms);
+            await localDB.putAll('rooms', mergedRooms);
+            state.allRooms = await processRooms(mergedRooms);
             await localDB.saveUserTree(uid, rooms);
             window.filterRooms();
+
+            // Warm up room image cache in background
+            warmUpRoomImageCache();
+
         } else if (rooms && rooms.length === 0) {
             await localDB.clear('rooms');
             state.allRooms = [];
@@ -2693,6 +2734,7 @@ export function initHRNchat(customConfig = {}) {
 
         if (navigator.onLine) {
             await warmUpAvatarCache();
+            await warmUpRoomImageCache();
         }
 
         const hasMaster = await checkMaster();
@@ -2768,4 +2810,4 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(false);
     };
     init();
-}
+},
