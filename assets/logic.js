@@ -2712,6 +2712,16 @@ export function initHRNchat(customConfig = {}) {
             await warmUpRoomImageCache();
         }
         startTabSync();
+        
+        const storedEmail = localStorage.getItem('hrn_auth_email');
+        const storedPass = localStorage.getItem('hrn_auth_pass');
+
+        if (navigator.onLine && storedEmail && storedPass) {
+             window.goOnline();
+        } else {
+             window.nav('scr-start');
+             window.setLoading(false);
+        }
     };
     init();
 }
