@@ -19,29 +19,30 @@ const SHELL_ASSETS = [
 
 self.addEventListener('install', (event) => {
     event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => {
-            return Promise.all(
-                SHELL_ASSETS.map((url) => {
-                    return cache.add(url).catch((err) => {
-                        console.warn('Failed to cache:', url, err);
-                    });
-                })
-            );
+        caches.open(CACHE_NAME).then(async (cache) => {
+            for (const url of SHELL_ASSETS) {
+                try {
+                    const response = await fetch(url, { cache: 'no-store' });
+                    if (response.ok) await cache.put(url, response.clone());
+                } catch (err) {
+                    console.warn('Failed to cache:', url, err);
+                }
+            }
         }).then(() => self.skipWaiting())
     );
 });
 
 self.addEventListener('activate', (event) => {
     event.waitUntil(
-        caches.keys().then((cacheNames) => {
-            return Promise.all(
+        caches.keys().then((cacheNames) =>
+            Promise.all(
                 cacheNames.map((cacheName) => {
                     if (cacheName !== CACHE_NAME && cacheName !== RUNTIME_CACHE) {
                         return caches.delete(cacheName);
                     }
                 })
-            );
-        }).then(() => self.clients.claim())
+            )
+        ).then(() => self.clients.claim())
     );
 });
 
@@ -54,8 +55,7 @@ self.addEventListener('fetch', (event) => {
             fetch(request)
                 .then((response) => {
                     if (response.status === 200) {
-                        const copy = response.clone();
-                        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+                        caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
                     }
                     return response;
                 })
@@ -69,22 +69,24 @@ self.addEventListener('fetch', (event) => {
 
     if (isImage || isProxyImage) {
         event.respondWith(
-            caches.open(RUNTIME_CACHE).then((cache) => {
-                return cache.match(request).then((cachedResponse) => {
+            caches.open(RUNTIME_CACHE).then((cache) =>
+                cache.match(request).then((cachedResponse) => {
                     if (cachedResponse) return cachedResponse;
-                    return fetch(request).then((networkResponse) => {
-                        if (networkResponse && networkResponse.status === 200) {
-                            cache.put(request, networkResponse.clone());
-                        }
-                        return networkResponse;
-                    }).catch(() => {
-                        if (isImage) return caches.match('./assets/avatars/1.webp');
-                        return new Response(JSON.stringify({ error: "Offline" }), { 
-                            headers: { 'Content-Type': 'application/json' } 
+                    return fetch(request)
+                        .then((networkResponse) => {
+                            if (networkResponse && networkResponse.status === 200) {
+                                cache.put(request, networkResponse.clone());
+                            }
+                            return networkResponse;
+                        })
+                        .catch(() => {
+                            if (isImage) return caches.match('./assets/avatars/1.webp');
+                            return new Response(JSON.stringify({ error: "Offline" }), { 
+                                headers: { 'Content-Type': 'application/json' } 
+                            });
                         });
-                    });
-                });
-            })
+                })
+            )
         );
         return;
     }
@@ -92,17 +94,19 @@ self.addEventListener('fetch', (event) => {
     const isCDN = url.origin !== location.origin;
     if (isCDN && (url.href.includes('fonts') || url.href.includes('css') || url.href.includes('jsdelivr'))) {
         event.respondWith(
-            caches.open(RUNTIME_CACHE).then((cache) => {
-                return cache.match(request).then((cachedResponse) => {
-                    const fetchPromise = fetch(request).then((networkResponse) => {
-                        if (networkResponse && networkResponse.status === 200) {
-                            cache.put(request, networkResponse.clone());
-                        }
-                        return networkResponse;
-                    }).catch(() => cachedResponse);
+            caches.open(RUNTIME_CACHE).then((cache) =>
+                cache.match(request).then((cachedResponse) => {
+                    const fetchPromise = fetch(request)
+                        .then((networkResponse) => {
+                            if (networkResponse && networkResponse.status === 200) {
+                                cache.put(request, networkResponse.clone());
+                            }
+                            return networkResponse;
+                        })
+                        .catch(() => cachedResponse);
                     return cachedResponse || fetchPromise;
-                });
-            })
+                })
+            )
         );
         return;
     }
@@ -110,13 +114,11 @@ self.addEventListener('fetch', (event) => {
     if (url.href.includes('supabase.co')) {
         if (url.protocol === 'wss:') return;
         event.respondWith(
-            fetch(request).catch(() => {
-                return new Response(JSON.stringify({ message: "Offline" }), {
-                    status: 503,
-                    statusText: "Service Unavailable",
-                    headers: { "Content-Type": "application/json" }
-                });
-            })
+            fetch(request).catch(() => new Response(JSON.stringify({ message: "Offline" }), {
+                status: 503,
+                statusText: "Service Unavailable",
+                headers: { "Content-Type": "application/json" }
+            }))
         );
         return;
     }
