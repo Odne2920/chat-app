@@ -28,6 +28,8 @@ export function initHRNchat(customConfig = {}) {
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
     const DB_NAME = 'HRN_LOCAL_DB_2';
     const DB_VERSION = 10000;
+    const MASTER_LOCK_KEY = 'hrn_master_lock';
+    const TAB_ID_KEY = 'hrn_tab_id';
     const state = {
         user: null,
         currentRoomId: null,
@@ -51,8 +53,7 @@ export function initHRNchat(customConfig = {}) {
         pending: null,
         lastCreated: null,
         lastCreatedPass: null,
-        isMasterTab: false,
-        tabId: sessionStorage.getItem('hrn_tab_id') || (sessionStorage.setItem('hrn_tab_id', crypto.randomUUID()), sessionStorage.getItem('hrn_tab_id')),
+        tabId: sessionStorage.getItem(TAB_ID_KEY) || (sessionStorage.setItem(TAB_ID_KEY, crypto.randomUUID()), sessionStorage.getItem(TAB_ID_KEY)),
         processingAction: false,
         isLoadingHistory: false,
         oldestMessageTimestamp: null,
@@ -93,6 +94,8 @@ export function initHRNchat(customConfig = {}) {
         authListener: null,
         loginRetryCount: 0,
         internetCheckInterval: null,
+        tabSyncInterval: null,
+        isMasterTab: false,
         ui: {
             isOverlayOpen: false,
             isContextOpen: false,
@@ -103,7 +106,6 @@ export function initHRNchat(customConfig = {}) {
     let toastVisible = false;
     let lastToastText = "";
     let lastToastTime = 0;
-    const tabChannel = new BroadcastChannel('hrn_tab_sync');
     const fetchWithTimeout = async (promise, ms = CONFIG.requestTimeout) => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), ms);
@@ -287,6 +289,7 @@ export function initHRNchat(customConfig = {}) {
         setConnectionVisuals(offline ? 'offline' : 'connected');
     };
     const setConnectionVisuals = (status) => {
+        if (!state.isMasterTab && status !== 'offline') return;
         const avatar = $('chat-avatar-display');
         if (!avatar) return;
         avatar.classList.remove('status-connected', 'status-connecting', 'status-offline');
@@ -299,11 +302,11 @@ export function initHRNchat(customConfig = {}) {
         const btn = $('send-btn');
         const input = $('chat-input');
         if (!btn || !input) return;
-        if (state.isOfflineMode) {
+        if (state.isOfflineMode || !state.isMasterTab) {
             btn.disabled = true;
             btn.style.opacity = "0.5";
             input.disabled = true;
-            input.placeholder = "You are offline.";
+            input.placeholder = !state.isMasterTab ? "Inactive Tab" : "You are offline.";
         } else {
             const isReady = state.isChatChannelReady;
             if (isReady && !state.isCapacityBlocked) {
@@ -324,8 +327,8 @@ export function initHRNchat(customConfig = {}) {
         const infoRoomEl = $('info-room-count');
         const infoGlobalEl = $('info-global-count');
         let dotColor = 'var(--text-mute)';
-        if (state.isOfflineMode) {
-            if (infoGlobalEl) infoGlobalEl.innerText = "Local";
+        if (state.isOfflineMode || !state.isMasterTab) {
+            if (infoGlobalEl) infoGlobalEl.innerText = !state.isMasterTab ? "Inactive" : "Local";
             if (roomCountEl) roomCountEl.innerText = "-";
             if (infoRoomEl) infoRoomEl.innerText = "-";
         } else {
@@ -768,7 +771,7 @@ export function initHRNchat(customConfig = {}) {
             state.globalPresenceChannel = null;
         }
         state.isChatChannelReady = false;
-        setConnectionVisuals('offline');
+        if (state.isMasterTab) setConnectionVisuals('offline');
     };
     const queryOnlineCountImmediately = async () => {
         if (!state.presenceChannel) return;
@@ -779,7 +782,7 @@ export function initHRNchat(customConfig = {}) {
         schedulePresenceUpdate();
     };
     const setupGlobalPresence = async (userId) => {
-        if (state.isOfflineMode || state.isCapacityBlocked) return;
+        if (state.isOfflineMode || state.isCapacityBlocked || !state.isMasterTab) return;
         if (state.globalPresenceChannel) state.globalPresenceChannel.unsubscribe();
         state.globalPresenceChannel = db.channel('global-presence', {
             config: {
@@ -818,7 +821,7 @@ export function initHRNchat(customConfig = {}) {
         });
     };
     const hardRefreshRoomMessages = async (roomId) => {
-        if (!roomId || !state.currentRoomData) return;
+        if (!roomId || !state.currentRoomData || !state.isMasterTab) return;
         const container = $('chat-messages');
         let messages = [];
         try {
@@ -866,7 +869,7 @@ export function initHRNchat(customConfig = {}) {
         state.reconnectTimer = null;
         cleanupChannels(true);
         state.isReconnecting = !!state.currentRoomId;
-        setConnectionVisuals('connecting');
+        if (state.isMasterTab) setConnectionVisuals('connecting');
         if (state.currentRoomId) {
             const timeout = getConnectionTimeout();
             state.connectionTimeoutTimer = setTimeout(() => {
@@ -876,7 +879,7 @@ export function initHRNchat(customConfig = {}) {
             initRoomPresence(state.currentRoomId);
             setupChatChannel(state.currentRoomId);
         } else {
-            setConnectionVisuals('connected');
+            if (state.isMasterTab) setConnectionVisuals('connected');
         }
     };
     const attemptLogin = async (email, pass) => {
@@ -918,6 +921,7 @@ export function initHRNchat(customConfig = {}) {
         return true;
     };
     window.goOnline = async () => {
+        if (!state.isMasterTab) return;
         stopInternetCheck();
         state.isCapacityBlocked = false;
         const overlay = $('block-overlay');
@@ -970,6 +974,7 @@ export function initHRNchat(customConfig = {}) {
         }
     };
     window.stayOffline = () => {
+        if (!state.isMasterTab) return;
         const overlay = $('block-overlay');
         if (overlay) overlay.classList.remove('active');
         setAppMode(true);
@@ -977,7 +982,7 @@ export function initHRNchat(customConfig = {}) {
         if (state.user) window.loadRooms();
     };
     const setupChatChannel = (id) => {
-        if (state.isOfflineMode) return;
+        if (state.isOfflineMode || !state.isMasterTab) return;
         if (state.chatChannel) state.chatChannel.unsubscribe();
         const isDirect = state.currentRoomData?.is_direct;
         state.chatChannel = db.channel(`room_chat_${id}`, {
@@ -1079,18 +1084,18 @@ export function initHRNchat(customConfig = {}) {
                 }
                 state.isReconnecting = false;
                 if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
-                setConnectionVisuals('connected');
+                if (state.isMasterTab) setConnectionVisuals('connected');
                 hardRefreshRoomMessages(id);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                 if (state.connectionTimeoutTimer) {
                     clearTimeout(state.connectionTimeoutTimer);
                     state.connectionTimeoutTimer = null;
                 }
-                if (!state.isOfflineMode && !state.isCapacityBlocked) {
+                if (!state.isOfflineMode && !state.isCapacityBlocked && state.isMasterTab) {
                     state.isChatChannelReady = false;
                     if (!state.isReconnecting) {
                         state.isReconnecting = true;
-                        setConnectionVisuals('connecting');
+                        if (state.isMasterTab) setConnectionVisuals('connecting');
                         state.reconnectTimer = setTimeout(attemptHardReconnect, 1000);
                     }
                 }
@@ -1098,7 +1103,7 @@ export function initHRNchat(customConfig = {}) {
         });
     };
     const initRoomPresence = async (roomId) => {
-        if (!state.user || state.isOfflineMode) return;
+        if (!state.user || state.isOfflineMode || !state.isMasterTab) return;
         if (state.presenceChannel) state.presenceChannel.unsubscribe();
         const myId = state.user.id;
         state.presenceChannel = db.channel(`room_presence:${roomId}`, {
@@ -1126,16 +1131,16 @@ export function initHRNchat(customConfig = {}) {
                 queryOnlineCountImmediately();
                 if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
                 state.heartbeatInterval = setInterval(async () => {
-                    if (state.presenceChannel && !state.isCapacityBlocked) await state.presenceChannel.track({
+                    if (state.presenceChannel && !state.isCapacityBlocked && state.isMasterTab) await state.presenceChannel.track({
                         user_id: myId,
                         online_at: new Date().toISOString()
                     });
                 }, CONFIG.presenceHeartbeatMs);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                 state.isPresenceSubscribed = false;
-                if (!state.isOfflineMode && !state.isCapacityBlocked) {
+                if (!state.isOfflineMode && !state.isCapacityBlocked && state.isMasterTab) {
                     state.isReconnecting = true;
-                    setConnectionVisuals('connecting');
+                    if (state.isMasterTab) setConnectionVisuals('connecting');
                     state.reconnectTimer = setTimeout(attemptHardReconnect, 1000);
                 }
             }
@@ -1154,7 +1159,7 @@ export function initHRNchat(customConfig = {}) {
                 if (response.ok) {
                     if (state.internetCheckInterval) clearInterval(state.internetCheckInterval);
                     state.internetCheckInterval = null;
-                    if (state.isOfflineMode) window.goOnline();
+                    if (state.isOfflineMode && state.isMasterTab) window.goOnline();
                 }
             } catch (e) {}
         }, 5000);
@@ -1168,16 +1173,16 @@ export function initHRNchat(customConfig = {}) {
     const monitorConnection = () => {
         const onlineHandler = () => {
             stopInternetCheck();
-            if (state.isOfflineMode) {
+            if (state.isOfflineMode && state.isMasterTab) {
                 window.goOnline();
-            } else {
+            } else if (state.isMasterTab) {
                 setConnectionVisuals('connecting');
                 if (state.currentRoomId) attemptHardReconnect();
                 else setConnectionVisuals('connected');
             }
         };
         const offlineHandler = () => {
-            setAppMode(true);
+            if (state.isMasterTab) setAppMode(true);
             if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
             if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
             state.isReconnecting = false;
@@ -1202,7 +1207,7 @@ export function initHRNchat(customConfig = {}) {
         });
     };
     const showContextMenu = (e, msgEl) => {
-        if (!msgEl || !state.user) return;
+        if (!msgEl || !state.user || !state.isMasterTab) return;
         if (msgEl.classList.contains('msg-deleted')) return;
         e.preventDefault();
         e.stopPropagation();
@@ -1246,7 +1251,7 @@ export function initHRNchat(customConfig = {}) {
     };
     $('ctx-edit').onclick = (e) => {
         e.stopPropagation();
-        if (!state.contextTarget) return;
+        if (!state.contextTarget || !state.isMasterTab) return;
         state.editingMessage = state.contextTarget;
         $('edit-msg-input').value = state.contextTarget.text;
         window.showOverlayView('edit-message');
@@ -1262,7 +1267,7 @@ export function initHRNchat(customConfig = {}) {
     };
     $('ctx-delete').onclick = async (e) => {
         e.stopPropagation();
-        if (!state.contextTarget || !state.user) return;
+        if (!state.contextTarget || !state.user || !state.isMasterTab) return;
         const idToDelete = state.contextTarget.id;
         hideContextMenu();
         window.setLoading(true, "Deleting...");
@@ -1275,7 +1280,7 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(false);
     };
     window.saveEditMessage = async () => {
-        if (!state.editingMessage) return;
+        if (!state.editingMessage || !state.isMasterTab) return;
         const v = $('edit-msg-input').value.trim();
         if (!v) return window.toast("Message is empty.");
         const msgDate = new Date(state.editingMessage.created_at);
@@ -1318,7 +1323,7 @@ export function initHRNchat(customConfig = {}) {
     const chatContainer = $('chat-messages');
     chatContainer.addEventListener('touchstart', (e) => {
         const msg = e.target.closest('.msg');
-        if (!msg) return;
+        if (!msg || !state.isMasterTab) return;
         state.longPressTimer = setTimeout(() => {
             showContextMenu(e, msg);
         }, 500);
@@ -1328,6 +1333,7 @@ export function initHRNchat(customConfig = {}) {
     chatContainer.addEventListener('touchend', () => clearTimeout(state.longPressTimer));
     chatContainer.addEventListener('touchmove', () => clearTimeout(state.longPressTimer));
     chatContainer.addEventListener('contextmenu', (e) => {
+        if (!state.isMasterTab) return;
         const msg = e.target.closest('.msg');
         if (msg) {
             e.preventDefault();
@@ -1536,94 +1542,64 @@ export function initHRNchat(customConfig = {}) {
         input.value = '';
         window.toast("User added.");
     };
-    const checkMaster = () => new Promise((resolve) => {
-        let masterFound = false;
-        const handler = (ev) => {
-            if (ev.data.type === 'PONG_MASTER') masterFound = true;
-        };
-        tabChannel.addEventListener('message', handler);
-        tabChannel.postMessage({
-            type: 'PING_MASTER',
-            id: state.tabId
-        });
-        setTimeout(() => {
-            tabChannel.removeEventListener('message', handler);
-            resolve(masterFound);
-        }, 300);
-    });
     const handleDuplicateTab = () => {
-        const overlay = $('block-overlay');
-        if (overlay) {
-            overlay.innerHTML = `
-                <i data-lucide="copy" style="width:48px;height:48px;margin-bottom:24px;color:var(--warning)"></i>
-                <h1 style="margin-bottom: 20px" class="title">Duplicate Tab</h1>
-                <p class="subtitle" style="text-align:center">This tab is inactive to prevent sync issues.<br>Switch tabs to make it active.</p>
-            `;
-            overlay.classList.add('active');
-        }
+        state.isMasterTab = false;
         cleanupChannels(false);
         if (state.globalPresenceChannel) {
             state.globalPresenceChannel.unsubscribe();
             state.globalPresenceChannel = null;
         }
-        state.isMasterTab = false;
         setConnectionVisuals('offline');
-    };
-    window.forceClaimMaster = () => {
         const overlay = $('block-overlay');
-        if (overlay) overlay.classList.remove('active');
-        if (!state.isMasterTab) {
-            state.isMasterTab = true;
-            tabChannel.postMessage({
-                type: 'CLAIM_MASTER',
-                id: state.tabId
-            });
-            if (state.user) {
-                setupGlobalPresence(state.user.id);
-                if (state.currentRoomId) attemptHardReconnect();
-            }
+        if (overlay) {
+            overlay.innerHTML = `
+                <i data-lucide="copy" style="width:48px;height:48px;margin-bottom:24px;color:var(--warning)"></i>
+                <h1 style="margin-bottom: 20px" class="title">Duplicate Tab</h1>
+                <p class="subtitle" style="text-align:center">This tab is inactive to prevent sync issues.<br>Switch to the active tab or click below.</p>
+                <button onclick="window.forceClaimMaster()" class="btn-primary" style="margin-top:24px;background:var(--bg-solid);color:var(--text-main);border:1px solid var(--border)">Make This Tab Active</button>
+            `;
+            overlay.classList.add('active');
         }
+        updateSendButtonState();
+        updatePresenceUI();
     };
-    tabChannel.onmessage = (ev) => {
-        const {
-            type,
-            id
-        } = ev.data;
-        if (type === 'CLAIM_MASTER' && id !== state.tabId) {
-            if (state.isMasterTab) {
-                if (id > state.tabId) {
+    const startTabSync = () => {
+        if (state.tabSyncInterval) clearInterval(state.tabSyncInterval);
+        const tick = () => {
+            const now = Date.now();
+            const masterLock = localStorage.getItem(MASTER_LOCK_KEY);
+            let lockData = null;
+            try { if (masterLock) lockData = JSON.parse(masterLock); } catch (e) {}
+            if (lockData && lockData.id === state.tabId) {
+                localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now }));
+                if (!state.isMasterTab) {
+                    state.isMasterTab = true;
+                    const overlay = $('block-overlay');
+                    if (overlay && overlay.classList.contains('active') && overlay.innerHTML.includes('Duplicate Tab')) {
+                        overlay.classList.remove('active');
+                    }
+                    updateSendButtonState();
+                    updatePresenceUI();
+                    if (state.user) {
+                        setupGlobalPresence(state.user.id);
+                        if (state.currentRoomId) attemptHardReconnect();
+                    }
+                }
+            } else if (!lockData || now - lockData.ts > 5000) {
+                localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now }));
+            } else {
+                if (state.isMasterTab) {
                     handleDuplicateTab();
-                } else {
-                    tabChannel.postMessage({
-                        type: 'CLAIM_MASTER',
-                        id: state.tabId
-                    });
                 }
             }
-        }
-        if (type === 'PING_MASTER') {
-            if (state.isMasterTab) {
-                tabChannel.postMessage({
-                    type: 'PONG_MASTER',
-                    id: state.tabId
-                });
-            }
-        }
-        if (type === 'ABDICATE') {
-            if (!state.isMasterTab) {
-                window.forceClaimMaster();
-            }
-        }
+        };
+        tick();
+        state.tabSyncInterval = setInterval(tick, 2000);
     };
-    const beforeUnloadHandler = () => {
-        if (state.isMasterTab) {
-            tabChannel.postMessage({
-                type: 'ABDICATE',
-                id: state.tabId
-            });
-        }
+    window.forceClaimMaster = () => {
+        localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() }));
+        startTabSync();
     };
-    window.addEventListener('beforeunload', beforeUnloadHandler);
     window.openOverlay = () => {
         const oc = $('overlay-container');
         if (oc) {
@@ -1752,7 +1728,7 @@ export function initHRNchat(customConfig = {}) {
         if (container.scrollTop < 50 && !state.isLoadingHistory && state.hasMoreHistory) loadMoreHistory();
     };
     const loadMoreHistory = async () => {
-        if (!state.oldestMessageTimestamp || !state.currentRoomId) return;
+        if (!state.oldestMessageTimestamp || !state.currentRoomId || !state.isMasterTab) return;
         state.isLoadingHistory = true;
         const container = $('chat-messages');
         const oldScrollHeight = container.scrollHeight;
@@ -1900,7 +1876,7 @@ export function initHRNchat(customConfig = {}) {
         $('edit-room-pass').disabled = true;
     };
     window.saveRoomSettings = async (e) => {
-        if (!e || !e.isTrusted) return;
+        if (!e || !e.isTrusted || !state.isMasterTab) return;
         if (state.processingAction) return;
         state.processingAction = true;
         const name = $('edit-room-name').value.trim();
@@ -1960,7 +1936,7 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(false);
     };
     window.deleteRoom = async () => {
-        if (!state.currentRoomId) return;
+        if (!state.currentRoomId || !state.isMasterTab) return;
         window.setLoading(true, "Deleting...");
         const {
             error
@@ -1979,7 +1955,7 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(false);
     };
     window.openVault = async (id, n, rawPassword, roomSalt, cachedData = null) => {
-        if (!state.user) return window.toast("Please log in.");
+        if (!state.user || !state.isMasterTab) return window.toast("Please log in.");
         if (state.isCapacityBlocked) return;
         window.setLoading(true, "Opening chat...");
         state.currentRoomPassword = rawPassword;
@@ -2114,7 +2090,7 @@ export function initHRNchat(customConfig = {}) {
         return true;
     };
     window.sendMsg = async (e) => {
-        if (!e || !e.isTrusted) return;
+        if (!e || !e.isTrusted || !state.isMasterTab) return;
         if (!state.user || !state.currentRoomId || state.processingAction) return;
         if (state.isOfflineMode) return window.toast("Offline mode.");
         if (!state.isChatChannelReady) return;
@@ -2163,7 +2139,7 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(false);
     };
     window.handleLogin = async (e) => {
-        if (!e || !e.isTrusted) return;
+        if (!e || !e.isTrusted || !state.isMasterTab) return;
         if (state.processingAction) return;
         state.processingAction = true;
         const em = $('l-email').value,
@@ -2214,7 +2190,7 @@ export function initHRNchat(customConfig = {}) {
         state.processingAction = false;
     };
     window.handleRegister = async (e) => {
-        if (!e || !e.isTrusted) return;
+        if (!e || !e.isTrusted || !state.isMasterTab) return;
         if (state.processingAction) return;
         state.processingAction = true;
         const n = $('r-name').value,
@@ -2287,7 +2263,7 @@ export function initHRNchat(customConfig = {}) {
         }, 1000);
     };
     window.handleVerify = async (e) => {
-        if (!e || !e.isTrusted) return;
+        if (!e || !e.isTrusted || !state.isMasterTab) return;
         if (state.processingAction) return;
         state.processingAction = true;
         const code = $('v-code').value,
@@ -2353,7 +2329,7 @@ export function initHRNchat(customConfig = {}) {
         }
     };
     window.handleCreate = async (e) => {
-        if (!e || !e.isTrusted) return;
+        if (!e || !e.isTrusted || !state.isMasterTab) return;
         if (state.processingAction) return;
         state.processingAction = true;
         const isDirect = state.createType === 'direct';
@@ -2449,7 +2425,7 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(false);
     };
     window.submitGate = async (e) => {
-        if (!e || !e.isTrusted) return;
+        if (!e || !e.isTrusted || !state.isMasterTab) return;
         const inputPass = $('gate-pass').value;
         if (state.isOfflineMode) {
             window.openVault(state.pending.id, state.pending.name, inputPass, state.pending.salt, state.pending);
@@ -2494,7 +2470,7 @@ export function initHRNchat(customConfig = {}) {
         return await processImageToCache(url);
     };
     window.enterCreated = () => {
-        if (!state.lastCreated) return;
+        if (!state.lastCreated || !state.isMasterTab) return;
         window.openVault(state.lastCreated.id, state.lastCreated.name, state.lastCreatedPass, state.lastCreated.salt, state.lastCreated);
         state.lastCreatedPass = null;
     };
@@ -2505,7 +2481,7 @@ export function initHRNchat(customConfig = {}) {
     } = db.auth.onAuthStateChange(async (ev, ses) => {
         if (state.isOfflineMode && !ses) return;
         state.user = ses?.user;
-        if (state.user && !state.isOfflineMode) setupGlobalPresence(state.user.id);
+        if (state.user && !state.isOfflineMode && state.isMasterTab) setupGlobalPresence(state.user.id);
         const createBtn = $('icon-plus-lobby');
         if (createBtn) createBtn.style.display = 'flex';
         if (ev === 'SIGNED_OUT') {
@@ -2570,6 +2546,7 @@ export function initHRNchat(customConfig = {}) {
         });
     };
     window.refreshLobby = async () => {
+        if (!state.isMasterTab) return;
         const now = Date.now();
         if (now - state.lastLobbyRefresh < 10000) return window.toast("Please wait.");
         state.lastLobbyRefresh = now;
@@ -2688,7 +2665,7 @@ export function initHRNchat(customConfig = {}) {
         }
     };
     window.joinPrivate = async () => {
-        if (!state.user) return window.toast("Please log in.");
+        if (!state.user || !state.isMasterTab) return window.toast("Please log in.");
         const id = $('join-id').value.trim();
         if (!id) return;
         if (state.isOfflineMode) {
@@ -2734,76 +2711,7 @@ export function initHRNchat(customConfig = {}) {
             await warmUpAvatarCache();
             await warmUpRoomImageCache();
         }
-        const isSlave = await checkMaster();
-        if (isSlave) {
-            handleDuplicateTab();
-            return;
-        }
-        state.isMasterTab = true;
-        tabChannel.postMessage({
-            type: 'CLAIM_MASTER',
-            id: state.tabId
-        });
-        const storedEmail = localStorage.getItem('hrn_auth_email');
-        const storedPass = localStorage.getItem('hrn_auth_pass');
-        if (navigator.onLine) {
-            setAppMode(false);
-            setupGlobalPresence(null);
-            if (storedEmail && storedPass) {
-                window.setLoading(true, "Auto-logging in...");
-                const success = await attemptLogin(storedEmail, storedPass);
-                window.setLoading(false);
-                if (success) {
-                    setupGlobalPresence(state.user.id);
-                    window.nav('scr-lobby');
-                    window.loadRooms();
-                } else {
-                    const knownUser = await localDB.get('known_users', storedEmail);
-                    const hashInput = await sha256(storedPass + storedEmail);
-                    if (knownUser && knownUser.pass_hash === hashInput) {
-                        state.user = {
-                            id: knownUser.userId,
-                            email: knownUser.email,
-                            user_metadata: knownUser.metadata
-                        };
-                        setAppMode(true);
-                        window.nav('scr-lobby');
-                        window.loadRooms();
-                        window.toast("Offline mode.");
-                    } else {
-                        localStorage.removeItem('hrn_auth_email');
-                        localStorage.removeItem('hrn_auth_pass');
-                        window.nav('scr-start');
-                    }
-                }
-            } else {
-                window.nav('scr-start');
-            }
-        } else {
-            setAppMode(true);
-            startInternetCheck();
-            if (storedEmail && storedPass) {
-                const knownUser = await localDB.get('known_users', storedEmail);
-                const hashInput = await sha256(storedPass + storedEmail);
-                if (knownUser && knownUser.pass_hash === hashInput) {
-                    state.user = {
-                        id: knownUser.userId,
-                        email: knownUser.email,
-                        user_metadata: knownUser.metadata
-                    };
-                    window.nav('scr-lobby');
-                    window.loadRooms();
-                    window.toast("Offline mode.");
-                } else {
-                    window.nav('scr-login');
-                    $('l-email').value = storedEmail;
-                    $('l-pass').value = storedPass;
-                }
-            } else {
-                window.nav('scr-start');
-            }
-        }
-        window.setLoading(false);
+        startTabSync();
     };
     init();
 }
