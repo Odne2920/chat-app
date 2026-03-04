@@ -1,5 +1,5 @@
-const CACHE_NAME = 'hrn-chat-cache-v2.0.5';
-const RUNTIME_CACHE = 'hrn-runtime-v6';
+const CACHE_NAME = 'hrn-chat-cache-v2.0.7';
+const RUNTIME_CACHE = 'hrn-runtime-v8';
 
 const SHELL_ASSETS = [
     './',
@@ -58,17 +58,20 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    event.respondWith(
-        caches.match(request).then((cached) => {
-            if (cached) return cached;
+    // Alleen GET requests en alleen bestanden uit shell assets of runtime
+    if (request.method === 'GET') {
+        event.respondWith(
+            caches.match(request).then((cached) => {
+                if (cached) return cached;
 
-            return fetch(request).then((response) => {
-                if (response && response.status === 200) {
-                    const responseClone = response.clone(); 
-                    caches.open(RUNTIME_CACHE).then((c) => c.put(request, responseClone));
-                }
-                return response;
-            }).catch(() => new Response(null, { status: 503 }));
-        })
-    );
+                return fetch(request).then((response) => {
+                    if (response && response.status === 200) {
+                        const responseClone = response.clone();
+                        caches.open(RUNTIME_CACHE).then((c) => c.put(request, responseClone));
+                    }
+                    return response;
+                }).catch(() => new Response(null, { status: 503 }));
+            })
+        );
+    }
 });
