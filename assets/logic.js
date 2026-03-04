@@ -2708,8 +2708,6 @@ export function initHRNchat(customConfig = {}) {
         await localDB.init();
         monitorConnection();
         
-        window.nav('scr-start');
-
         if (navigator.onLine) {
             await warmUpAvatarCache();
             await warmUpRoomImageCache();
@@ -2720,8 +2718,17 @@ export function initHRNchat(customConfig = {}) {
         const storedPass = localStorage.getItem('hrn_auth_pass');
 
         if (navigator.onLine && storedEmail && storedPass) {
-             window.goOnline();
+             await window.goOnline();
+             
+             // FIX: Controleer handmatig of we ingelogd zijn.
+             // Als state.user null is, is het inloggen mislukt of overgeslagen.
+             // In dat geval forceren we het startscherm en zetten we de loader uit.
+             if (!state.user) {
+                 window.nav('scr-start');
+                 window.setLoading(false);
+             }
         } else {
+             window.nav('scr-start');
              window.setLoading(false);
         }
     };
