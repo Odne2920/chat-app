@@ -1,15 +1,32 @@
 /* 
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
- *  Version: 1.0.5
+ *  Version: 1.0.5-debug
  *  assets/logic.js 
  *  MIT License
  *  GH: HyperRushNet & hrn-chat
+ *  
+ *  *** DEBUG BUILD ***
+ *  Deze versie toont uitgebreide logs op het scherm en in de console.
  */
 import {
     createClient
 }
 from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+
+// --- DEBUG HELPER ---
+const debugLog = (step, message, isError = false) => {
+    const prefix = `[DEBUG ${step}]`;
+    if (isError) {
+        console.error(prefix, message);
+        window.toast(`❌ ${step}: ${message}`);
+    } else {
+        console.log(prefix, message);
+        // Optioneel: comment de volgende regel uit als je alleen console logs wilt
+        window.toast(`✅ ${step}: ${message}`);
+    }
+};
+
 export function initHRNchat(customConfig = {}) {
     const CONFIG = {
         supabaseUrl: customConfig.supabaseUrl || "https://jnhsuniduzvhkpexorqk.supabase.co",
@@ -128,13 +145,19 @@ export function initHRNchat(customConfig = {}) {
         db: null,
         async init() {
             return new Promise((resolve, reject) => {
+                debugLog("IDB", "Opening database...");
                 const request = indexedDB.open(DB_NAME, DB_VERSION);
-                request.onerror = (e) => reject(request.error);
+                request.onerror = (e) => {
+                    debugLog("IDB", "Error opening DB: " + request.error, true);
+                    reject(request.error);
+                };
                 request.onsuccess = () => {
                     this.db = request.result;
+                    debugLog("IDB", "Database opened successfully");
                     resolve();
                 };
                 request.onupgradeneeded = (e) => {
+                    debugLog("IDB", "Upgrade needed...");
                     const db = e.target.result;
                     const tx = e.target.transaction;
                     if (!db.objectStoreNames.contains('rooms')) db.createObjectStore('rooms', {
@@ -883,6 +906,7 @@ export function initHRNchat(customConfig = {}) {
         }
     };
     const attemptLogin = async (email, pass) => {
+        debugLog("Auth", "Attempting login...");
         try {
             const {
                 error
@@ -892,16 +916,22 @@ export function initHRNchat(customConfig = {}) {
             }));
             if (error) throw error;
         } catch (e) {
+            debugLog("Auth", "Login failed: " + e.message, true);
             return false;
         }
         state.loginRetryCount = 0;
         
-        // FIX: Added safety for getUser call to prevent infinite load on failure
         try {
+            debugLog("Auth", "Getting user data...");
             const { data, error } = await db.auth.getUser();
-            if (error || !data?.user) return false;
+            if (error || !data?.user) {
+                debugLog("Auth", "Get user failed", true);
+                return false;
+            }
             state.user = data.user;
+            debugLog("Auth", "User data OK");
         } catch (e) {
+            debugLog("Auth", "Get user crash: " + e.message, true);
             return false;
         }
 
@@ -915,13 +945,17 @@ export function initHRNchat(customConfig = {}) {
             await cacheAvatar(profileData);
         }
         const hashInput = await sha256(pass + email);
-        await localDB.put('known_users', {
-            id: email,
-            pass_hash: hashInput,
-            email: email,
-            metadata: state.user.user_metadata,
-            userId: state.user.id
-        });
+        try {
+            await localDB.put('known_users', {
+                id: email,
+                pass_hash: hashInput,
+                email: email,
+                metadata: state.user.user_metadata,
+                userId: state.user.id
+            });
+        } catch(e) {
+            debugLog("Storage", "Could not save known user: " + e.message, true);
+        }
         return true;
     };
     
@@ -931,6 +965,8 @@ export function initHRNchat(customConfig = {}) {
         state.isCapacityBlocked = false;
         const overlay = $('block-overlay');
         if (overlay) overlay.classList.remove('active');
+        
+        debugLog("Net", "Going online...");
         
         if (state.user) {
             const storedEmail = localStorage.getItem('hrn_auth_email');
@@ -960,7 +996,6 @@ export function initHRNchat(customConfig = {}) {
             window.setLoading(true, "Connecting...");
         }
         
-        // FIX: Wrapped in try...finally to ensure setLoading(false) is always called
         try {
             const storedEmail = localStorage.getItem('hrn_auth_email');
             const storedPass = localStorage.getItem('hrn_auth_pass');
@@ -985,9 +1020,8 @@ export function initHRNchat(customConfig = {}) {
                 }
             }
         } catch (err) {
-            console.error("goOnline error", err);
+            debugLog("Net", "goOnline Crash: " + err.message, true);
             window.toast("An error occurred.");
-        } finally {
             if (isAuthScreen) window.setLoading(false);
         }
     };
@@ -1583,21 +1617,34 @@ export function initHRNchat(customConfig = {}) {
         updatePresenceUI();
     };
     const startTabSync = () => {
+        debugLog("TabSync", "Starting tab sync...");
         state.isMasterTab = true;
-        localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() }));
+        try {
+            localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() }));
+        } catch(e) {
+            debugLog("TabSync", "LocalStorage access denied", true);
+            // We gaan door, maar tab sync werkt mogelijk niet
+        }
 
         if (state.tabSyncInterval) clearInterval(state.tabSyncInterval);
         const tick = () => {
             const now = Date.now();
-            const masterLock = localStorage.getItem(MASTER_LOCK_KEY);
+            let masterLock = null;
+            try {
+                 masterLock = localStorage.getItem(MASTER_LOCK_KEY);
+            } catch(e) {
+                // LocalStorage niet beschikbaar
+                return;
+            }
+           
             let lockData = null;
             try { if (masterLock) lockData = JSON.parse(masterLock); } catch (e) {}
 
             if (lockData && lockData.id === state.tabId) {
-                localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now }));
+                try { localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now })); } catch(e) {}
                 state.isMasterTab = true;
             } else if (!lockData || now - lockData.ts > 5000) {
-                localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now }));
+                try { localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now })); } catch(e) {}
                 state.isMasterTab = true;
             } else {
                 if (state.isMasterTab) {
@@ -1609,33 +1656,33 @@ export function initHRNchat(customConfig = {}) {
         state.tabSyncInterval = setInterval(tick, 2000);
     };
 
-const init = async () => {
-    // Start met een try blok om crashes te vangen
-    try {
-        // Probeer de database te initialiseren, maar vang fouten op
+    const init = async () => {
+        debugLog("Init", "Start initialisatie...");
         try {
-            await localDB.init();
-        } catch (dbError) {
-            console.warn("IndexedDB kon niet geïnitialiseerd worden (misschien privémodus?):", dbError);
-            // Zet een flag of gebruik een fallback als dat nodig is voor je app
+            debugLog("Init", "Step 1: Local DB");
+            await localDB.init(); // Als dit faalt, vangen we het hieronder af
+        } catch (e) {
+            debugLog("Init", "IndexedDB fout: " + e.message, true);
         }
 
+        debugLog("Init", "Step 2: Monitor Connection");
         monitorConnection();
-
-        // Probeer tab sync, maar vang fouten op (localStorage issues)
+        
+        debugLog("Init", "Step 3: Tab Sync");
         try {
             startTabSync();
-        } catch (syncError) {
-            console.warn("Tab sync mislukt (localStorage probleem?):", syncError);
-            // Ga door, maar misschien zonder tab-synchronisatie features
+        } catch(e) {
+            debugLog("Init", "Tab sync fout: " + e.message, true);
         }
 
+        debugLog("Init", "Step 4: Navigate Start");
         window.nav('scr-start');
         
-        // Zet de spinner uit, ongeacht of DB/Sync faalde
+        debugLog("Init", "Step 5: Set Loading False");
         window.setLoading(false);
 
         if (navigator.onLine) {
+            debugLog("Init", "Step 6: Warming up caches");
             warmUpAvatarCache();
             warmUpRoomImageCache();
         }
@@ -1644,19 +1691,16 @@ const init = async () => {
         const storedPass = localStorage.getItem('hrn_auth_pass');
 
         if (navigator.onLine && storedEmail && storedPass) {
-             await window.goOnline();
+            debugLog("Init", "Step 7: Auto Login");
+            await window.goOnline();
+        } else {
+            debugLog("Init", "Step 7: No auto login (offline or no creds)");
         }
-    } catch (err) {
-        // Vang globale fouten in de init af
-        console.error("Critical init error:", err);
-        // Zorg dat de spinner in ieder geval uitgaat zodat de gebruiker niet vastzit
-        window.setLoading(false); 
-        window.toast("App initialisatie mislukt. Probeer de pagina te vernieuwen.");
-    }
-};
+        debugLog("Init", "Initialisatie voltooid");
+    };
     
     window.forceClaimMaster = () => {
-        localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() }));
+        try { localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() })); } catch(e) {}
         startTabSync();
     };
     window.openOverlay = () => {
