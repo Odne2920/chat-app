@@ -1,4 +1,4 @@
-const CACHE_NAME="hrn-cache-v1.0.01014";
+const CACHE_NAME="hrn-cache-v1.0.01015";
 const FILES_TO_CACHE=[
 "./index.html?v=16",
 "./assets/logic.js?v=16",
