@@ -1609,12 +1609,30 @@ export function initHRNchat(customConfig = {}) {
         state.tabSyncInterval = setInterval(tick, 2000);
     };
 
-    const init = async () => {
-        await localDB.init();
+const init = async () => {
+    // Start met een try blok om crashes te vangen
+    try {
+        // Probeer de database te initialiseren, maar vang fouten op
+        try {
+            await localDB.init();
+        } catch (dbError) {
+            console.warn("IndexedDB kon niet geïnitialiseerd worden (misschien privémodus?):", dbError);
+            // Zet een flag of gebruik een fallback als dat nodig is voor je app
+        }
+
         monitorConnection();
-        startTabSync();
+
+        // Probeer tab sync, maar vang fouten op (localStorage issues)
+        try {
+            startTabSync();
+        } catch (syncError) {
+            console.warn("Tab sync mislukt (localStorage probleem?):", syncError);
+            // Ga door, maar misschien zonder tab-synchronisatie features
+        }
 
         window.nav('scr-start');
+        
+        // Zet de spinner uit, ongeacht of DB/Sync faalde
         window.setLoading(false);
 
         if (navigator.onLine) {
@@ -1628,7 +1646,14 @@ export function initHRNchat(customConfig = {}) {
         if (navigator.onLine && storedEmail && storedPass) {
              await window.goOnline();
         }
-    };
+    } catch (err) {
+        // Vang globale fouten in de init af
+        console.error("Critical init error:", err);
+        // Zorg dat de spinner in ieder geval uitgaat zodat de gebruiker niet vastzit
+        window.setLoading(false); 
+        window.toast("App initialisatie mislukt. Probeer de pagina te vernieuwen.");
+    }
+};
     
     window.forceClaimMaster = () => {
         localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() }));
