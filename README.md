@@ -35,3 +35,41 @@
 - MIT License - You can use, modify, and share this software.  
 - Original copyright notice must be included.
 
+## Project Structure
+```text
+hrn-chat.github.io/
+├── 404.html
+├── LICENSE
+├── README.md
+├── index.html
+├── service-worker.js
+├── api/
+│   ├── CORSproxy.js
+│   └── mailAPI.js
+├── assets/
+│   ├── README-content/
+│   │   └── hrn-chat-banner.jpg
+│   ├── avatars/
+│   │   ├── 1.webp
+│   │   ├── 2.webp
+│   │   ├── 3.webp
+│   │   ├── 4.webp
+│   │   └── 5.webp
+│   ├── branding/
+│   │   ├── app/
+│   │   │   ├── icon-192x192-maskable.png
+│   │   │   ├── icon-192x192-not-maskable.png
+│   │   │   ├── icon-256x256-maskable.png
+│   │   │   ├── icon-256x256-not-maskable.png
+│   │   │   ├── icon-512x512-maskable.png
+│   │   │   └── icon-512x512-not-maskable.png
+│   │   └── favicon/
+│   │       ├── favicon-black.png
+│   │       └── favicon-white.png
+│   ├── internet-test-file.txt
+│   ├── logic.js
+│   └── manifest.json
+└── docs/
+    └── deploy.html
+```
+
