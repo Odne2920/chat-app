@@ -781,8 +781,8 @@ export function initHRNchat(customConfig = {}) {
             const { error } = await execQuery(db.auth.signInWithPassword({ email, password: pass }));
             if (error) throw error;
         } catch (e) {
-            await new Promise(r => setTimeout(r, 3000));
-            return attemptLogin(email, pass);
+            // Retry verwijderd. Direct false returnen bij fout.
+            return false;
         }
 
         state.loginRetryCount = 0;
@@ -1250,7 +1250,56 @@ export function initHRNchat(customConfig = {}) {
     const applyRateLimit = () => { const now = Date.now(); if (now - state.lastMessageTime < CONFIG.rateLimitMs) return false; return true; };
     window.sendMsg = async (e) => { if (!e || !e.isTrusted) return; if (!state.user || !state.currentRoomId || state.processingAction) return; if (state.isOfflineMode) return window.toast("Offline mode."); if (!state.isChatChannelReady) return; if (state.isCapacityBlocked) return window.toast("Server full."); if (!applyRateLimit()) return; const v = $('chat-input').value.trim(); if (!v) return; if (v.length > CONFIG.maxMessageLength) { return window.toast(`Message too long (max ${CONFIG.maxMessageLength} chars).`); } state.processingAction = true; $('chat-input').value = ''; state.lastMessageTime = Date.now(); try { const enc = await encryptMessage(v, state.currentRoomId); const { data, error } = await db.from('messages').insert([{ room_id: state.currentRoomId, user_id: state.user.id, user_name: state.user.user_metadata?.full_name, content: enc }]).select().single(); if (error) window.toast("Failed to send."); } catch (err) { window.toast("Send failed."); } state.processingAction = false; };
     window.leaveChat = async () => { window.setLoading(true, "Leaving..."); if (state.chatChannel) state.chatChannel.unsubscribe(); state.chatChannel = null; state.currentRoomId = null; state.currentRoomData = null; if (state.presenceChannel) state.presenceChannel.unsubscribe(); state.presenceChannel = null; state.isPresenceSubscribed = false; if (state.heartbeatInterval) clearInterval(state.heartbeatInterval); state.heartbeatInterval = null; setConnectionVisuals('offline'); if ($('info-edit-btn')) $('info-edit-btn').style.display = 'none'; window.nav('scr-lobby'); window.loadRooms(); window.setLoading(false); };
-    window.handleLogin = async (e) => { if (!e || !e.isTrusted) return; if (state.processingAction) return; state.processingAction = true; const em = $('l-email').value, p = $('l-pass').value; if (!em || !p) { window.toast("Missing fields."); state.processingAction = false; return; } window.setLoading(true, "Signing In..."); if (!navigator.onLine) { const knownUser = await localDB.get('known_users', em); if (knownUser && knownUser.metadata) { const hashInput = await sha256(p + em); if (knownUser.pass_hash && knownUser.pass_hash === hashInput) { state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata }; setAppMode(true); window.nav('scr-lobby'); window.loadRooms(); window.setLoading(false); state.processingAction = false; window.toast("Offline login successful."); return; } } window.toast("No internet and no offline account found."); window.setLoading(false); state.processingAction = false; return; } const success = await attemptLogin(em, p); if (success) { localStorage.setItem('hrn_auth_email', em); localStorage.setItem('hrn_auth_pass', p); setAppMode(false); if (state.user) setupGlobalPresence(state.user.id); window.nav('scr-lobby'); window.loadRooms(); window.toast("Connected."); } else {} window.setLoading(false); state.processingAction = false; };
+    window.handleLogin = async (e) => { 
+        if (!e || !e.isTrusted) return; 
+        if (state.processingAction) return; 
+        state.processingAction = true; 
+        const em = $('l-email').value, p = $('l-pass').value; 
+        if (!em || !p) { 
+            window.toast("Missing fields."); 
+            state.processingAction = false; 
+            return; 
+        } 
+        window.setLoading(true, "Signing In..."); 
+        
+        if (!navigator.onLine) { 
+            const knownUser = await localDB.get('known_users', em); 
+            if (knownUser && knownUser.metadata) { 
+                const hashInput = await sha256(p + em); 
+                if (knownUser.pass_hash && knownUser.pass_hash === hashInput) { 
+                    state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata }; 
+                    setAppMode(true); 
+                    window.nav('scr-lobby'); 
+                    window.loadRooms(); 
+                    window.setLoading(false); 
+                    state.processingAction = false; 
+                    window.toast("Offline login successful."); 
+                    return; 
+                } 
+            } 
+            window.toast("No internet and no offline account found."); 
+            window.setLoading(false); 
+            state.processingAction = false; 
+            return; 
+        } 
+        
+        const success = await attemptLogin(em, p); 
+        if (success) { 
+            localStorage.setItem('hrn_auth_email', em); 
+            localStorage.setItem('hrn_auth_pass', p); 
+            setAppMode(false); 
+            if (state.user) setupGlobalPresence(state.user.id); 
+            window.nav('scr-lobby'); 
+            window.loadRooms(); 
+            window.toast("Connected."); 
+        } else { 
+            // Foutafhandeling als attemptLogin faalt (geen retry)
+            window.toast("Invalid credentials or connection error."); 
+        } 
+        
+        window.setLoading(false); 
+        state.processingAction = false; 
+    };
     window.handleRegister = async (e) => { if (!e || !e.isTrusted) return; if (state.processingAction) return; state.processingAction = true; const n = $('r-name').value, em = $('r-email').value.trim().toLowerCase(), p = $('r-pass').value; const customAvatar = $('r-avatar-url').value.trim(); const avatarUrl = customAvatar || state.selectedAvatar; if (!n || !em || p.length < 8) { window.toast("Invalid input."); state.processingAction = false; return; } if (!navigator.onLine) { window.toast("Internet connection required to register."); state.processingAction = false; return; } window.setLoading(true, "Sending Code..."); try { const [r, err] = await safeAwait(fetch(CONFIG.mailApi, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "send", email: em }) })); if (err) throw err; if (r) { if (r.status === 429) { window.toast("Too many attempts."); state.processingAction = false; window.setLoading(false); return; } const j = await r.json(); if (j.message === "Code sent") { sessionStorage.setItem('temp_reg', JSON.stringify({ n, em, p, avatar: avatarUrl })); window.nav('scr-verify'); startVTimer(); window.setLoading(false); } else { window.toast("Could not send code."); window.setLoading(false); } } } catch (err) { window.toast("Network error."); window.setLoading(false); } state.processingAction = false; };
     const startVTimer = () => { let left = CONFIG.verificationCodeExpiry; if (state.vTimer) clearInterval(state.vTimer); state.vTimer = setInterval(() => { left--; $('v-timer').innerText = `${Math.floor(left/60)}:${(left%60).toString().padStart(2,'0')}`; if (left <= 0) { clearInterval(state.vTimer); window.nav('scr-register'); } }, 1000); };
     window.handleVerify = async (e) => { if (!e || !e.isTrusted) return; if (state.processingAction) return; state.processingAction = true; const code = $('v-code').value, temp = JSON.parse(sessionStorage.getItem('temp_reg')); if (!temp) { window.toast("Session expired."); state.processingAction = false; return; } window.setLoading(true, "Verifying..."); try { const r = await fetch(CONFIG.mailApi, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "verify", email: temp.em, code: code }) }); if (r.status === 429) { window.toast("Too many attempts."); state.processingAction = false; window.setLoading(false); return; } const j = await r.json(); if (j.message === "Verified") await finishReg(temp); else { window.toast("Invalid code."); window.setLoading(false); } } catch (err) { window.toast("Verification failed."); window.setLoading(false); } state.processingAction = false; };
