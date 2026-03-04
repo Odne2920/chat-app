@@ -1,7 +1,7 @@
 /*
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
- *  Version: 1.0.7
+ *  Version: 1.0.8
  *  assets/logic.js 
  *  MIT License
  *  GH: HyperRushNet & hrn-chat
@@ -100,6 +100,9 @@ export function initHRNchat(customConfig = {}) {
     };
     let toastQueue = [];
     let toastVisible = false;
+    let lastToastText = "";
+    let lastToastTime = 0;
+    
     const tabChannel = new BroadcastChannel('hrn_tab_sync');
     const localDB = {
         db: null,
@@ -340,19 +343,33 @@ export function initHRNchat(customConfig = {}) {
             state.presenceUpdateTimer = null;
         }, 500);
     };
+    
+    // Toast Queue with Deduplication
     const processToastQueue = () => {
         if (toastVisible || toastQueue.length === 0) return;
+        
+        // Deduplication Logic
+        const msg = toastQueue[0];
+        const now = Date.now();
+        if (msg === lastToastText && (now - lastToastTime < 3000)) {
+            toastQueue.shift(); // Remove duplicate
+            if (toastQueue.length === 0) return;
+            processToastQueue(); // Check next
+            return;
+        }
+        
         toastVisible = true;
-        const msg = toastQueue.shift();
+        const confirmedMsg = toastQueue.shift();
+        lastToastText = confirmedMsg;
+        lastToastTime = now;
+
         const c = $('toast-container');
         const t = document.createElement('div');
         t.className = 'toast-item';
-        t.innerText = msg;
-        const spawnTime = Date.now(); // Capture spawn time
+        t.innerText = confirmedMsg;
+        const spawnTime = Date.now();
         t.onclick = () => {
-            // Only allow dismiss after 200ms
-            if (Date.now() - spawnTime < 200) return; 
-            
+            if (Date.now() - spawnTime < 200) return;
             t.style.opacity = '0';
             setTimeout(() => {
                 t.remove();
@@ -374,9 +391,13 @@ export function initHRNchat(customConfig = {}) {
         }, 3000);
     };
     window.toast = m => {
+        // Additional check: prevent queueing the exact same message as the last shown one immediately
+        if (m === lastToastText && (Date.now() - lastToastTime < 2000)) return;
+        
         toastQueue.push(m);
         processToastQueue();
     };
+    
     window.setLoading = (s, text = null) => {
         const loader = $('loader-overlay');
         const loaderText = $('loader-text');
@@ -398,7 +419,6 @@ export function initHRNchat(customConfig = {}) {
         }
     };
     
-    // Centralized Image Processing Helper
     const processImageToCache = async (url) => {
         if (!url || url.startsWith('data:')) return url;
         try {
@@ -411,16 +431,13 @@ export function initHRNchat(customConfig = {}) {
                 img.onload = async () => {
                     URL.revokeObjectURL(blobUrl); 
                     const canvas = document.createElement('canvas');
-                    const size = 200; // Fixed size 200x200
+                    const size = 200;
                     canvas.width = size;
                     canvas.height = size;
                     const ctx = canvas.getContext('2d');
-
-                    // Calculate scaling to cover the square (center crop)
                     const scale = Math.max(size / img.width, size / img.height);
                     const x = (size - img.width * scale) / 2;
                     const y = (size - img.height * scale) / 2;
-
                     ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
                     resolve(canvas.toDataURL('image/jpeg', 0.85));
                 };
@@ -435,16 +452,13 @@ export function initHRNchat(customConfig = {}) {
         }
     };
 
-    // Profile Avatar Caching
     const cacheAvatar = async (profile) => {
         if (!profile || !profile.avatar_url) return profile;
         if (profile.avatar_url.startsWith('data:')) {
             profile.cached_avatar = profile.avatar_url;
             return profile;
         }
-        // Check if already cached in memory/IDB
         if(profile.cached_avatar) return profile;
-
         const dataUrl = await processImageToCache(profile.avatar_url);
         if (dataUrl) {
             profile.cached_avatar = dataUrl;
@@ -454,24 +468,18 @@ export function initHRNchat(customConfig = {}) {
         return profile;
     };
 
-    // Room Avatar Caching
     const cacheRoomImage = async (room) => {
         if (!room || !room.avatar_url || room.avatar_url.startsWith('data:')) return room;
-        // If already cached in the room object, skip
         if (room.cached_avatar) return room;
-
         const dataUrl = await processImageToCache(room.avatar_url);
         if (dataUrl) {
             room.cached_avatar = dataUrl;
-            // Save back to IDB rooms store
             const dbRoom = await localDB.get('rooms', room.id);
             if (dbRoom) {
                 dbRoom.cached_avatar = dataUrl;
                 await localDB.put('rooms', dbRoom);
             }
             state.roomImageCache[room.id] = dataUrl;
-            
-            // Optional: Trigger UI update if this room is currently displayed
             if (state.currentRoomId === room.id) {
                  const avEl = $('chat-avatar-display');
                  if(avEl) avEl.innerHTML = `<img src="${dataUrl}">`;
@@ -484,7 +492,6 @@ export function initHRNchat(customConfig = {}) {
         if (state.isOfflineMode) return;
         const profiles = await localDB.getAll('profiles');
         if (!profiles || profiles.length === 0) return;
-
         const promises = profiles.map(async (p) => {
             if (p.avatar_url && !p.avatar_url.startsWith('data:') && !p.cached_avatar) {
                 return cacheAvatar(p);
@@ -494,12 +501,10 @@ export function initHRNchat(customConfig = {}) {
         await Promise.all(promises);
     };
 
-    // Warm up Room Images on init/sync
     const warmUpRoomImageCache = async () => {
         if (state.isOfflineMode) return;
         const rooms = await localDB.getAll('rooms');
         if (!rooms || rooms.length === 0) return;
-
         const promises = rooms.map(async (r) => {
             if (r.avatar_url && !r.avatar_url.startsWith('data:') && !r.cached_avatar) {
                 return cacheRoomImage(r);
@@ -556,14 +561,10 @@ export function initHRNchat(customConfig = {}) {
             avatar: null
         };
         if (!room.is_direct) {
-            // Priority: Cached Avatar > Data URL > Network URL
             let avatar = room.cached_avatar || (room.avatar_url && room.avatar_url.startsWith('data:') ? room.avatar_url : null);
-            
-            // If we have a remote URL and no cache, try to cache it in background
             if (!avatar && room.avatar_url && !state.isOfflineMode) {
-                cacheRoomImage(room); // Fire and forget update
+                cacheRoomImage(room);
             }
-            
             return {
                 name: room.name,
                 avatar: avatar
@@ -791,7 +792,7 @@ export function initHRNchat(customConfig = {}) {
             state.globalPresenceChannel = null;
         }
         state.isChatChannelReady = false;
-        state.isReconnecting = false;
+        // Do NOT set isReconnecting to false here, logic handles it
         setConnectionVisuals('offline');
     };
     const queryOnlineCountImmediately = async () => {
@@ -828,7 +829,6 @@ export function initHRNchat(customConfig = {}) {
             state.globalPresenceReady = true;
             schedulePresenceUpdate();
             
-            // CAPACITY CHECK ON SYNC
             if (state.user && !state.isOfflineMode && !state.isCapacityBlocked) {
                 if (users.length > CONFIG.maxUsers) {
                     const myIndex = users.findIndex(u => u.user_id === state.user.id);
@@ -845,16 +845,12 @@ export function initHRNchat(customConfig = {}) {
         });
     };
     
-    // Helper to sync messages on reconnect
     const syncRoomMessages = async (roomId) => {
         if (!roomId || !state.currentRoomData) return;
-        
-        // Determine the last message we have in the UI
         const container = $('chat-messages');
         const lastMsgEl = container.querySelector('.msg:last-of-type');
         const lastDate = lastMsgEl ? lastMsgEl.dataset.time : new Date(0).toISOString();
         
-        // Fetch messages newer than the last one we have
         const { data, error } = await db.from('messages').select('*')
             .eq('room_id', roomId)
             .gt('created_at', lastDate)
@@ -877,7 +873,7 @@ export function initHRNchat(customConfig = {}) {
                         prev = m;
                     });
                     
-                    container.scrollTop = container.scrollHeight; // Scroll to bottom
+                    container.scrollTop = container.scrollHeight;
                     await localDB.putAll('messages', validMsgs.map(m => ({ ...m, room_id: roomId })));
                 }
             } catch (e) {
@@ -887,63 +883,45 @@ export function initHRNchat(customConfig = {}) {
     };
 
     const attemptHardReconnect = () => {
-        if (!state.user || state.isOfflineMode) return;
-        if (state.isCapacityBlocked) return;
-        
-        // CAPACITY CHECK ON RECONNECT
-        if (state.globalOnlineCount > CONFIG.maxUsers) {
-             handleServerFull();
-             return;
-        }
+        // Stop if offline, blocked, or NOT master tab
+        if (!state.user || state.isOfflineMode || state.isCapacityBlocked || !state.isMasterTab) return;
 
         if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
         if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
         state.reconnectTimer = null;
-        cleanupChannels(true);
+        
+        cleanupChannels(true); // Keep global presence info for checks
+        
         state.isReconnecting = !!state.currentRoomId;
         setConnectionVisuals('connecting');
+        
         if (state.currentRoomId) {
             const timeout = getConnectionTimeout();
             state.connectionTimeoutTimer = setTimeout(() => {
-                state.isReconnecting = false;
+                // Silent retry loop
+                state.isReconnecting = false; // Reset flag to allow next attempt
                 attemptHardReconnect();
             }, timeout);
+            
             initRoomPresence(state.currentRoomId);
             setupChatChannel(state.currentRoomId);
         } else {
             setConnectionVisuals('connected');
         }
     };
+    
     const attemptLogin = async (email, pass) => {
-        if (state.loginRetryCount > 5) {
-            window.toast("Connection failed after multiple attempts.");
-            return false;
-        }
-        state.loginRetryCount++;
-        const {
-            error
-        } = await db.auth.signInWithPassword({
-            email,
-            password: pass
-        });
+        // Infinite silent login loop
+        const { error } = await db.auth.signInWithPassword({ email, password: pass });
+
         if (error) {
-            if (error.message.includes("Failed to fetch") || error.message.includes("Network")) {
-                window.toast(`Connection lost. Retrying (${state.loginRetryCount})...`);
-                return new Promise(resolve => setTimeout(() => resolve(attemptLogin(email, pass)), 2000));
-            } else {
-                localStorage.removeItem('hrn_auth_email');
-                localStorage.removeItem('hrn_auth_pass');
-                window.toast(error.message);
-                return false;
-            }
+            // Wait and retry silently
+            await new Promise(r => setTimeout(r, 3000));
+            return attemptLogin(email, pass);
         }
 
         state.loginRetryCount = 0;
-        const {
-            data: {
-                user
-            }
-        } = await db.auth.getUser();
+        const { data: { user } } = await db.auth.getUser();
         state.user = user;
 
         if (user) {
@@ -966,6 +944,7 @@ export function initHRNchat(customConfig = {}) {
         });
         return true;
     };
+    
     window.goOnline = async () => {
         stopInternetCheck();
         state.isCapacityBlocked = false;
@@ -973,7 +952,7 @@ export function initHRNchat(customConfig = {}) {
         if (overlay) overlay.classList.remove('active');
 
         if (state.user) {
-            window.toast("Reconnecting...");
+            // Silent reconnect attempt
             const storedEmail = localStorage.getItem('hrn_auth_email');
             const storedPass = localStorage.getItem('hrn_auth_pass');
 
@@ -986,11 +965,10 @@ export function initHRNchat(customConfig = {}) {
                     window.loadRooms();
                     window.toast("Connected.");
                 } else {
-                    window.toast("Reconnect failed. Staying offline.");
+                    // Should not happen with infinite retry, but fallback
                     setAppMode(true);
                 }
             } else {
-                window.toast("Credentials not found locally. Staying offline.");
                 setAppMode(true);
             }
             return;
@@ -1014,16 +992,15 @@ export function initHRNchat(customConfig = {}) {
                 setupGlobalPresence(state.user.id);
                 window.nav('scr-lobby');
                 window.loadRooms();
+                window.toast("Connected.");
             } else {
-                // Do not navigate away on failure
-                window.toast("Login failed. Check credentials.");
+                // Infinite retry handles this, but if we break out:
+                window.toast("Connection failed.");
             }
             if (isAuthScreen) window.setLoading(false);
         } else {
             if (isAuthScreen) {
                 window.setLoading(false);
-                // Do not navigate to start if already on an auth screen or elsewhere
-                // window.nav('scr-start'); 
             } else {
                 window.toast("No saved login found.");
                 setAppMode(true);
@@ -1142,10 +1119,12 @@ export function initHRNchat(customConfig = {}) {
                 if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
                 setConnectionVisuals('connected');
                 
-                // SYNC MESSAGES ON RECONNECT
-                if(state.isReconnecting) { 
-                     syncRoomMessages(id);
-                }
+                // Notify connection only if we were previously disconnected/reconnecting
+                // Logic implies success here
+                if(state.isReconnecting) window.toast("Connected."); // Deduped naturally
+                
+                // Sync messages
+                syncRoomMessages(id);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                 if (state.connectionTimeoutTimer) {
                     clearTimeout(state.connectionTimeoutTimer);
@@ -2228,6 +2207,7 @@ export function initHRNchat(customConfig = {}) {
             if (state.user) setupGlobalPresence(state.user.id);
             window.nav('scr-lobby');
             window.loadRooms();
+            window.toast("Connected.");
         } else {}
 
         window.setLoading(false);
@@ -2474,10 +2454,7 @@ export function initHRNchat(customConfig = {}) {
                     p_hash: accessHash
                 });
             }
-            // Immediately cache the new room's avatar if we have one
             if(avatarUrl && !avatarUrl.startsWith('data:')) {
-                // Since we just created it, we can assign the cached_avatar immediately if it was processed
-                // processAvatarUrl returns base64 usually
             }
             
             await localDB.put('rooms', newRoom);
@@ -2656,10 +2633,8 @@ export function initHRNchat(customConfig = {}) {
             return;
         }
         if (rooms && rooms.length > 0) {
-            // Merge server data with local cache
             const mergedRooms = rooms.map(serverRoom => {
                 const localRoom = localRooms.find(lr => lr.id === serverRoom.id);
-                // Keep cached_avatar if URL hasn't changed
                 if (localRoom && localRoom.avatar_url === serverRoom.avatar_url && localRoom.cached_avatar) {
                     serverRoom.cached_avatar = localRoom.cached_avatar;
                 }
@@ -2671,8 +2646,6 @@ export function initHRNchat(customConfig = {}) {
             state.allRooms = await processRooms(mergedRooms);
             await localDB.saveUserTree(uid, rooms);
             window.filterRooms();
-
-            // Warm up room image cache in background
             warmUpRoomImageCache();
 
         } else if (rooms && rooms.length === 0) {
