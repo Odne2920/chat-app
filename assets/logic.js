@@ -971,7 +971,20 @@ export function initHRNchat(customConfig = {}) {
         const offlineHandler = () => { setAppMode(true); if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer); if (state.reconnectTimer) clearTimeout(state.reconnectTimer); state.isReconnecting = false; startInternetCheck(); };
         window.addEventListener('online', onlineHandler);
         window.addEventListener('offline', offlineHandler);
-        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { if (state.isCapacityBlocked) return; if (state.isOfflineMode) return; if (state.isMasterTab && !state.isChatChannelReady && state.currentRoomId) { attemptHardReconnect(); } else if (state.isMasterTab && navigator.onLine && !state.globalPresenceReady) { window.goOnline(); } } });
+        document.addEventListener('visibilitychange', () => { 
+            if (document.visibilityState === 'visible') { 
+                if (state.isCapacityBlocked) return; 
+                if (state.isOfflineMode) return; 
+                
+                // CHANGE: Automatically reclaim master if this tab is viewed but not master
+                if (!state.isMasterTab) {
+                     window.forceClaimMaster();
+                } else {
+                    if (!state.isChatChannelReady && state.currentRoomId) { attemptHardReconnect(); } 
+                    else if (navigator.onLine && !state.globalPresenceReady) { window.goOnline(); }
+                }
+            } 
+        });
     };
     const showContextMenu = (e, msgEl) => {
         if (!msgEl || !state.user) return;
@@ -1056,7 +1069,21 @@ export function initHRNchat(customConfig = {}) {
     window.addUserById = async () => { const input = $('picker-id-input'); const id = input.value.trim(); if (!id) return window.toast("Enter an ID."); if (state.selectedAllowedUsers.find(u => u.id === id)) return window.toast("User already added."); window.setLoading(true, "Fetching..."); const { data, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', id).single(); window.setLoading(false); if (error || !data) return window.toast("User not found."); await localDB.put('profiles', data); state.profileCache[data.id] = data; state.selectedAllowedUsers.push({ id: data.id, name: data.full_name, avatar: data.avatar_url }); renderPickerSelectedUsers(); input.value = ''; window.toast("User added."); };
     const checkMaster = () => new Promise((resolve) => { let masterFound = false; const handler = (ev) => { if (ev.data.type === 'PONG_MASTER') masterFound = true; }; tabChannel.addEventListener('message', handler); tabChannel.postMessage({ type: 'PING_MASTER' }); setTimeout(() => { tabChannel.removeEventListener('message', handler); resolve(masterFound); }, 300); });
     window.forceClaimMaster = () => { if (!state.isMasterTab) { state.isMasterTab = true; tabChannel.postMessage({ type: 'CLAIM_MASTER', id: state.tabId }); $('block-overlay').classList.remove('active'); if (state.user) { setupGlobalPresence(state.user.id); if (state.currentRoomId) attemptHardReconnect(); } } };
-    tabChannel.onmessage = (ev) => { if (ev.data.type === 'CLAIM_MASTER' && ev.data.id !== state.tabId) { if (state.isMasterTab) { cleanupChannels(); if (state.heartbeatInterval) clearInterval(state.heartbeatInterval); state.heartbeatInterval = null; state.isPresenceSubscribed = false; state.isMasterTab = false; setConnectionVisuals('offline'); const overlay = $('block-overlay'); overlay.innerHTML = `<i data-lucide="log-out" style="width:48px;height:48px;margin-bottom:24px;color:var(--danger)"></i><h1 class="title">Session Moved</h1><p class="subtitle" style="margin-bottom:48px">You switched to a new tab.</p><button class="btn btn-accent" onclick="window.forceClaimMaster()">Use Here</button>`; overlay.classList.add('active'); } } if (ev.data.type === 'PING_MASTER') { if (state.isMasterTab) tabChannel.postMessage({ type: 'PONG_MASTER' }); } };
+    tabChannel.onmessage = (ev) => { 
+        // CHANGE: If another tab claims master, we silently step down without showing the overlay.
+        if (ev.data.type === 'CLAIM_MASTER' && ev.data.id !== state.tabId) {
+            if (state.isMasterTab) {
+                cleanupChannels(); // Stop sockets
+                if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
+                state.heartbeatInterval = null;
+                state.isPresenceSubscribed = false;
+                state.isMasterTab = false;
+                setConnectionVisuals('offline'); // Just show offline visual, no overlay
+                // Removed: $('block-overlay')... overlay logic
+            }
+        }
+        if (ev.data.type === 'PING_MASTER') { if (state.isMasterTab) tabChannel.postMessage({ type: 'PONG_MASTER' }); } 
+    };
     const beforeUnloadHandler = () => tabChannel.postMessage({ type: 'CLAIM_MASTER', id: state.tabId });
     window.addEventListener('beforeunload', beforeUnloadHandler);
     window.openOverlay = () => { const oc = $('overlay-container'); if (oc) { oc.classList.add('active'); state.ui.isOverlayOpen = true; } };
@@ -1332,60 +1359,60 @@ export function initHRNchat(customConfig = {}) {
         await localDB.init();
         monitorConnection();
         if (navigator.onLine) { await warmUpAvatarCache(); await warmUpRoomImageCache(); }
-        const hasMaster = await checkMaster();
+        
+        // CHANGE: Immediately claim master status at start. 
+        // Do not check for other masters. This ensures the new tab is always master.
+        state.isMasterTab = true; 
+        tabChannel.postMessage({ type: 'CLAIM_MASTER', id: state.tabId });
+
         const storedEmail = localStorage.getItem('hrn_auth_email');
         const storedPass = localStorage.getItem('hrn_auth_pass');
-        if (hasMaster) {
-            state.isMasterTab = false;
-            $('block-overlay').classList.add('active');
-        } else {
-            state.isMasterTab = true;
-            tabChannel.postMessage({ type: 'CLAIM_MASTER', id: state.tabId });
-            if (navigator.onLine) {
-                setAppMode(false);
-                setupGlobalPresence(null);
-                if (storedEmail && storedPass) {
-                    window.setLoading(true, "Auto-logging in...");
-                    const success = await attemptLogin(storedEmail, storedPass);
-                    window.setLoading(false);
-                    if (success) {
-                        setupGlobalPresence(state.user.id);
-                        window.nav('scr-lobby');
-                        window.loadRooms();
-                    } else {
-                        const knownUser = await localDB.get('known_users', storedEmail);
-                        const hashInput = await sha256(storedPass + storedEmail);
-                        if (knownUser && knownUser.pass_hash === hashInput) {
-                            state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata };
-                            setAppMode(true);
-                            window.nav('scr-lobby');
-                            window.loadRooms();
-                            window.toast("Offline mode.");
-                        } else {
-                            localStorage.removeItem('hrn_auth_email');
-                            localStorage.removeItem('hrn_auth_pass');
-                            window.nav('scr-start');
-                        }
-                    }
-                } else { window.nav('scr-start'); }
-            } else {
-                setAppMode(true);
-                startInternetCheck();
-                if (storedEmail && storedPass) {
+
+        // Since we are master, proceed with login logic immediately
+        if (navigator.onLine) {
+            setAppMode(false);
+            setupGlobalPresence(null);
+            if (storedEmail && storedPass) {
+                window.setLoading(true, "Auto-logging in...");
+                const success = await attemptLogin(storedEmail, storedPass);
+                window.setLoading(false);
+                if (success) {
+                    setupGlobalPresence(state.user.id);
+                    window.nav('scr-lobby');
+                    window.loadRooms();
+                } else {
                     const knownUser = await localDB.get('known_users', storedEmail);
                     const hashInput = await sha256(storedPass + storedEmail);
                     if (knownUser && knownUser.pass_hash === hashInput) {
                         state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata };
+                        setAppMode(true);
                         window.nav('scr-lobby');
                         window.loadRooms();
                         window.toast("Offline mode.");
                     } else {
-                        window.nav('scr-login');
-                        $('l-email').value = storedEmail;
-                        $('l-pass').value = storedPass;
+                        localStorage.removeItem('hrn_auth_email');
+                        localStorage.removeItem('hrn_auth_pass');
+                        window.nav('scr-start');
                     }
-                } else { window.nav('scr-start'); }
-            }
+                }
+            } else { window.nav('scr-start'); }
+        } else {
+            setAppMode(true);
+            startInternetCheck();
+            if (storedEmail && storedPass) {
+                const knownUser = await localDB.get('known_users', storedEmail);
+                const hashInput = await sha256(storedPass + storedEmail);
+                if (knownUser && knownUser.pass_hash === hashInput) {
+                    state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata };
+                    window.nav('scr-lobby');
+                    window.loadRooms();
+                    window.toast("Offline mode.");
+                } else {
+                    window.nav('scr-login');
+                    $('l-email').value = storedEmail;
+                    $('l-pass').value = storedPass;
+                }
+            } else { window.nav('scr-start'); }
         }
         window.setLoading(false);
     };
