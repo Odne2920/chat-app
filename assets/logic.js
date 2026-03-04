@@ -392,6 +392,8 @@ export function initHRNchat(customConfig = {}) {
             ];
         }
     };
+    
+    // Updated cacheAvatar function: Crops to 200x200 square
     const cacheAvatar = async (profile) => {
         if (!profile || !profile.avatar_url) return profile;
         if (profile.avatar_url.startsWith('data:')) {
@@ -403,20 +405,40 @@ export function initHRNchat(customConfig = {}) {
             if (!response.ok) throw new Error("Invalid image response");
             const blob = await response.blob();
             return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = async () => {
-                    profile.cached_avatar = reader.result;
+                const img = new Image();
+                const blobUrl = URL.createObjectURL(blob);
+                img.onload = async () => {
+                    URL.revokeObjectURL(blobUrl); // Clean up memory
+                    
+                    const canvas = document.createElement('canvas');
+                    const size = 200; // Fixed size 200x200
+                    canvas.width = size;
+                    canvas.height = size;
+                    const ctx = canvas.getContext('2d');
+
+                    // Calculate scaling to cover the square (center crop)
+                    const scale = Math.max(size / img.width, size / img.height);
+                    const x = (size - img.width * scale) / 2;
+                    const y = (size - img.height * scale) / 2;
+
+                    ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+
+                    profile.cached_avatar = canvas.toDataURL('image/jpeg', 0.85);
                     await localDB.put('profiles', profile);
                     state.profileCache[profile.id] = profile;
                     resolve(profile);
                 };
-                reader.onerror = () => resolve(profile);
-                reader.readAsDataURL(blob);
+                img.onerror = () => {
+                    URL.revokeObjectURL(blobUrl);
+                    resolve(profile);
+                };
+                img.src = blobUrl;
             });
         } catch (e) {
             return profile;
         }
     };
+
     const warmUpAvatarCache = async () => {
         if (state.isOfflineMode) return;
         const profiles = await localDB.getAll('profiles');
@@ -1296,6 +1318,8 @@ export function initHRNchat(customConfig = {}) {
         $('r-avatar-url').value = '';
         updateCarouselPreview();
     };
+    
+    // Updated handleAvatarUpload: Crops to 200x200 square
     window.handleAvatarUpload = (event) => {
         const file = event.target.files[0];
         if (file) {
@@ -1304,24 +1328,18 @@ export function initHRNchat(customConfig = {}) {
                 const img = new Image();
                 img.onload = () => {
                     const canvas = document.createElement('canvas');
-                    let w = img.width,
-                        h = img.height;
-                    const max = 250;
-                    if (w > h) {
-                        if (w > max) {
-                            h *= max / w;
-                            w = max;
-                        }
-                    } else {
-                        if (h > max) {
-                            w *= max / h;
-                            h = max;
-                        }
-                    }
-                    canvas.width = w;
-                    canvas.height = h;
+                    const size = 200; // Fixed size 200x200
+                    canvas.width = size;
+                    canvas.height = size;
                     const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, w, h);
+
+                    // Center crop logic
+                    const scale = Math.max(size / img.width, size / img.height);
+                    const x = (size - img.width * scale) / 2;
+                    const y = (size - img.height * scale) / 2;
+
+                    ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+
                     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
                     state.selectedAvatar = dataUrl;
                     AVATARS.push(dataUrl);
@@ -1335,6 +1353,7 @@ export function initHRNchat(customConfig = {}) {
             reader.readAsDataURL(file);
         }
     };
+    
     window.selectCreateType = (type) => {
         state.createType = type;
         document.querySelectorAll('.type-card').forEach(el => el.classList.remove('selected'));
@@ -2387,6 +2406,7 @@ export function initHRNchat(customConfig = {}) {
         window.toast("ID copied.");
     };
 
+    // Updated processAvatarUrl: Crops to 200x200 square
     const processAvatarUrl = async (url) => {
         if (!url || url.startsWith('data:')) return url;
 
@@ -2397,39 +2417,30 @@ export function initHRNchat(customConfig = {}) {
             const blob = await response.blob();
 
             return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const img = new Image();
-                    img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        let w = img.width,
-                            h = img.height;
-                        const max = 250;
+                const img = new Image();
+                const blobUrl = URL.createObjectURL(blob);
+                img.onload = () => {
+                    URL.revokeObjectURL(blobUrl);
+                    const canvas = document.createElement('canvas');
+                    const size = 200; // Fixed size 200x200
+                    canvas.width = size;
+                    canvas.height = size;
+                    const ctx = canvas.getContext('2d');
 
-                        if (w > h) {
-                            if (w > max) {
-                                h *= max / w;
-                                w = max;
-                            }
-                        } else {
-                            if (h > max) {
-                                w *= max / h;
-                                h = max;
-                            }
-                        }
+                    // Center crop logic
+                    const scale = Math.max(size / img.width, size / img.height);
+                    const x = (size - img.width * scale) / 2;
+                    const y = (size - img.height * scale) / 2;
 
-                        canvas.width = w;
-                        canvas.height = h;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0, w, h);
+                    ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
 
-                        resolve(canvas.toDataURL('image/jpeg', 0.85));
-                    };
-                    img.onerror = () => resolve(url);
-                    img.src = e.target.result;
+                    resolve(canvas.toDataURL('image/jpeg', 0.85));
                 };
-                reader.onerror = () => resolve(url);
-                reader.readAsDataURL(blob);
+                img.onerror = () => {
+                    URL.revokeObjectURL(blobUrl);
+                    resolve(url);
+                };
+                img.src = blobUrl;
             });
         } catch (err) {
             console.warn("Avatar processing failed", err);
