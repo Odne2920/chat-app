@@ -2810,4 +2810,4 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(false);
     };
     init();
-},
+}
