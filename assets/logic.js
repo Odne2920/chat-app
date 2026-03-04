@@ -2707,6 +2707,9 @@ export function initHRNchat(customConfig = {}) {
     const init = async () => {
         await localDB.init();
         monitorConnection();
+        
+        window.nav('scr-start');
+
         if (navigator.onLine) {
             await warmUpAvatarCache();
             await warmUpRoomImageCache();
@@ -2719,7 +2722,6 @@ export function initHRNchat(customConfig = {}) {
         if (navigator.onLine && storedEmail && storedPass) {
              window.goOnline();
         } else {
-             window.nav('scr-start');
              window.setLoading(false);
         }
     };
