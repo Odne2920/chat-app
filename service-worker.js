@@ -1,5 +1,5 @@
-const CACHE_NAME = 'hrn-chat-cache-v2.0.3';
-const RUNTIME_CACHE = 'hrn-runtime-v4';
+const CACHE_NAME = 'hrn-chat-cache-v2.0.5';
+const RUNTIME_CACHE = 'hrn-runtime-v6';
 
 const SHELL_ASSETS = [
     './',
@@ -47,7 +47,10 @@ self.addEventListener('fetch', (event) => {
         event.respondWith(
             fetch(request)
                 .then((response) => {
-                    if (response.status === 200) caches.open(CACHE_NAME).then((c) => c.put(request, response.clone()));
+                    if (response && response.status === 200) {
+                        const copy = response.clone();
+                        caches.open(CACHE_NAME).then((c) => c.put(request, copy));
+                    }
                     return response;
                 })
                 .catch(() => caches.match('./index.html'))
@@ -56,11 +59,16 @@ self.addEventListener('fetch', (event) => {
     }
 
     event.respondWith(
-        caches.match(request).then((cached) =>
-            cached || fetch(request).then((response) => {
-                if (response && response.status === 200) caches.open(RUNTIME_CACHE).then((c) => c.put(request, response.clone()));
+        caches.match(request).then((cached) => {
+            if (cached) return cached;
+
+            return fetch(request).then((response) => {
+                if (response && response.status === 200) {
+                    const responseClone = response.clone(); 
+                    caches.open(RUNTIME_CACHE).then((c) => c.put(request, responseClone));
+                }
                 return response;
-            }).catch(() => new Response(null, { status: 503 }))
-        )
+            }).catch(() => new Response(null, { status: 503 }));
+        })
     );
 });
