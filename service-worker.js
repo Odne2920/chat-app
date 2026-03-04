@@ -1,5 +1,5 @@
-const CACHE_NAME = 'hrn-chat-cache-v2.0.1';
-const RUNTIME_CACHE = 'hrn-runtime-v2';
+const CACHE_NAME = 'hrn-chat-cache-v2.0.2';
+const RUNTIME_CACHE = 'hrn-runtime-v2.1';
 
 const SHELL_ASSETS = [
     './',
