@@ -1,5 +1,5 @@
-const CACHE_NAME = 'hrn-chat-cache-v2.0.2';
-const RUNTIME_CACHE = 'hrn-runtime-v2.1';
+const CACHE_NAME = 'hrn-chat-cache-v2.0.3';
+const RUNTIME_CACHE = 'hrn-runtime-v4';
 
 const SHELL_ASSETS = [
     './',
@@ -20,43 +20,34 @@ const SHELL_ASSETS = [
 self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(CACHE_NAME).then(async (cache) => {
-            for (const url of SHELL_ASSETS) {
+            await Promise.all(SHELL_ASSETS.map(async (url) => {
                 try {
                     const response = await fetch(url, { cache: 'no-store' });
                     if (response.ok) await cache.put(url, response.clone());
-                } catch (err) {
-                    console.warn('Failed to cache:', url, err);
-                }
-            }
+                } catch {}
+            }));
         }).then(() => self.skipWaiting())
     );
 });
 
 self.addEventListener('activate', (event) => {
     event.waitUntil(
-        caches.keys().then((cacheNames) =>
-            Promise.all(
-                cacheNames.map((cacheName) => {
-                    if (cacheName !== CACHE_NAME && cacheName !== RUNTIME_CACHE) {
-                        return caches.delete(cacheName);
-                    }
-                })
-            )
+        caches.keys().then((keys) =>
+            Promise.all(keys.map((key) => {
+                if (key !== CACHE_NAME && key !== RUNTIME_CACHE) return caches.delete(key);
+            }))
         ).then(() => self.clients.claim())
     );
 });
 
 self.addEventListener('fetch', (event) => {
     const { request } = event;
-    const url = new URL(request.url);
 
     if (request.mode === 'navigate') {
         event.respondWith(
             fetch(request)
                 .then((response) => {
-                    if (response.status === 200) {
-                        caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
-                    }
+                    if (response.status === 200) caches.open(CACHE_NAME).then((c) => c.put(request, response.clone()));
                     return response;
                 })
                 .catch(() => caches.match('./index.html'))
@@ -64,73 +55,12 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    const isImage = request.destination === 'image';
-    const isProxyImage = url.href.includes('/api/CORSproxy.js');
-
-    if (isImage || isProxyImage) {
-        event.respondWith(
-            caches.open(RUNTIME_CACHE).then((cache) =>
-                cache.match(request).then((cachedResponse) => {
-                    if (cachedResponse) return cachedResponse;
-                    return fetch(request)
-                        .then((networkResponse) => {
-                            if (networkResponse && networkResponse.status === 200) {
-                                cache.put(request, networkResponse.clone());
-                            }
-                            return networkResponse;
-                        })
-                        .catch(() => {
-                            if (isImage) return caches.match('./assets/avatars/1.webp');
-                            return new Response(JSON.stringify({ error: "Offline" }), { 
-                                headers: { 'Content-Type': 'application/json' } 
-                            });
-                        });
-                })
-            )
-        );
-        return;
-    }
-
-    const isCDN = url.origin !== location.origin;
-    if (isCDN && (url.href.includes('fonts') || url.href.includes('css') || url.href.includes('jsdelivr'))) {
-        event.respondWith(
-            caches.open(RUNTIME_CACHE).then((cache) =>
-                cache.match(request).then((cachedResponse) => {
-                    const fetchPromise = fetch(request)
-                        .then((networkResponse) => {
-                            if (networkResponse && networkResponse.status === 200) {
-                                cache.put(request, networkResponse.clone());
-                            }
-                            return networkResponse;
-                        })
-                        .catch(() => cachedResponse);
-                    return cachedResponse || fetchPromise;
-                })
-            )
-        );
-        return;
-    }
-
-    if (url.href.includes('supabase.co')) {
-        if (url.protocol === 'wss:') return;
-        event.respondWith(
-            fetch(request).catch(() => new Response(JSON.stringify({ message: "Offline" }), {
-                status: 503,
-                statusText: "Service Unavailable",
-                headers: { "Content-Type": "application/json" }
-            }))
-        );
-        return;
-    }
-
     event.respondWith(
-        caches.match(request).then((cachedResponse) => {
-            return cachedResponse || fetch(request).then((response) => {
-                if (response && response.status === 200) {
-                     caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, response.clone()));
-                }
+        caches.match(request).then((cached) =>
+            cached || fetch(request).then((response) => {
+                if (response && response.status === 200) caches.open(RUNTIME_CACHE).then((c) => c.put(request, response.clone()));
                 return response;
-            });
-        })
+            }).catch(() => new Response(null, { status: 503 }))
+        )
     );
 });
