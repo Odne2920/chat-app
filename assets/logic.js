@@ -920,31 +920,7 @@ export function initHRNchat(customConfig = {}) {
         });
         return true;
     };
-    window.goOnline = async () => {
-        if (!state.isMasterTab) return;
-        stopInternetCheck();
-        state.isCapacityBlocked = false;
-        const overlay = $('block-overlay');
-        if (overlay) overlay.classList.remove('active');
-        if (state.user) {
-            const storedEmail = localStorage.getItem('hrn_auth_email');
-            const storedPass = localStorage.getItem('hrn_auth_pass');
-            if (storedEmail && storedPass) {
-                const success = await attemptLogin(storedEmail, storedPass);
-                if (success) {
-                    setAppMode(false);
-                    setupGlobalPresence(state.user.id);
-                    if (state.currentRoomId) attemptHardReconnect();
-                    window.loadRooms();
-                    window.toast("Connected.");
-                } else {
-                    setAppMode(true);
-                }
-            } else {
-                setAppMode(true);
-            }
-            return;
-        }
+
         const activeScreen = document.querySelector('.screen.active');
         const isAuthScreen = ['scr-login', 'scr-register', 'scr-start', 'scr-verify'].includes(activeScreen?.id);
         if (isAuthScreen) {
@@ -1563,7 +1539,13 @@ export function initHRNchat(customConfig = {}) {
         updateSendButtonState();
         updatePresenceUI();
     };
-        const startTabSync = () => {
+
+
+    const startTabSync = () => {
+        // Forceer master status direct bij opstarten
+        state.isMasterTab = true; 
+        localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() }));
+
         if (state.tabSyncInterval) clearInterval(state.tabSyncInterval);
         const tick = () => {
             const now = Date.now();
@@ -1573,45 +1555,91 @@ export function initHRNchat(customConfig = {}) {
 
             if (lockData && lockData.id === state.tabId) {
                 localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now }));
-                if (!state.isMasterTab) {
-                    state.isMasterTab = true;
-                    const overlay = $('block-overlay');
-                    if (overlay && overlay.classList.contains('active') && overlay.innerHTML.includes('Duplicate Tab')) {
-                        overlay.classList.remove('active');
-                    }
-                    updateSendButtonState();
-                    updatePresenceUI();
-                    if (state.user) {
-                        setupGlobalPresence(state.user.id);
-                        if (state.currentRoomId) attemptHardReconnect();
-                    }
-                }
+                state.isMasterTab = true;
             } else if (!lockData || now - lockData.ts > 5000) {
-                // FIX: Claim lock EN zet state.isMasterTab direct op true
                 localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now }));
-                state.isMasterTab = true; 
+                state.isMasterTab = true;
             } else {
+                // Een andere tab heeft de lock
                 if (state.isMasterTab) {
                     handleDuplicateTab();
                 }
             }
         };
-        tick();
+        tick(); // Run direct
         state.tabSyncInterval = setInterval(tick, 2000);
+    };
+
+    window.goOnline = async () => {
+        if (!state.isMasterTab) return;
+        stopInternetCheck();
+        state.isCapacityBlocked = false;
+        const overlay = $('block-overlay');
+        if (overlay) overlay.classList.remove('active');
+        
+        // Als we al ingelogd zijn (bijv. door snelle auth check), ga door
+        if (state.user) {
+            const storedEmail = localStorage.getItem('hrn_auth_email');
+            const storedPass = localStorage.getItem('hrn_auth_pass');
+            if (storedEmail && storedPass) {
+                const success = await attemptLogin(storedEmail, storedPass);
+                if (success) {
+                    setAppMode(false);
+                    setupGlobalPresence(state.user.id);
+                    if (state.currentRoomId) attemptHardReconnect();
+                    window.loadRooms();
+                    window.nav('scr-lobby'); // Zorg dat we op lobby zitten
+                    window.toast("Connected.");
+                } else {
+                    setAppMode(true);
+                }
+            } else {
+                setAppMode(true);
+            }
+            return;
+        }
+
+        // Probeer in te loggen
+        const storedEmail = localStorage.getItem('hrn_auth_email');
+        const storedPass = localStorage.getItem('hrn_auth_pass');
+        
+        if (storedEmail && storedPass) {
+            window.setLoading(true, "Connecting...");
+            const success = await attemptLogin(storedEmail, storedPass);
+            if (success) {
+                setAppMode(false);
+                setupGlobalPresence(state.user.id);
+                window.nav('scr-lobby');
+                window.loadRooms();
+                window.toast("Connected.");
+            } else {
+                window.toast("Connection failed.");
+                window.nav('scr-start'); // Terug naar start als login faalt
+            }
+            window.setLoading(false);
+        } else {
+            // Geen gegevens
+            window.nav('scr-start');
+            window.setLoading(false);
+        }
     };
 
     const init = async () => {
         await localDB.init();
         monitorConnection();
         
-        // FIX: Start de tab sync DIRECT zodat isMasterTab true wordt
+        // FIX: Start tab sync en claim mastership direct
         startTabSync();
 
-        // FIX: Laad avatars/rooms in de achtergrond, maar wacht er NIET op.
-        // Anders blijft de loader hangen als het netwerk traag is.
+        // FIX: Toon direct het startscherm en zet loader uit.
+        // Dit voorkomt de "infinite spinner". Als we inloggen, navigeren we later naar de lobby.
+        window.nav('scr-start');
+        window.setLoading(false);
+
+        // Start achtergrondprocessen (non-blocking)
         if (navigator.onLine) {
-            warmUpAvatarCache(); // Geen await
-            warmUpRoomImageCache(); // Geen await
+            warmUpAvatarCache();
+            warmUpRoomImageCache();
         }
         
         const storedEmail = localStorage.getItem('hrn_auth_email');
@@ -1620,16 +1648,6 @@ export function initHRNchat(customConfig = {}) {
         // Probeer in te loggen als we online zijn en data hebben
         if (navigator.onLine && storedEmail && storedPass) {
              await window.goOnline();
-             
-             // Als goOnline faalde (user is null), ga naar start
-             if (!state.user) {
-                 window.nav('scr-start');
-                 window.setLoading(false);
-             }
-        } else {
-             // Geen data of offline: toon start scherm
-             window.nav('scr-start');
-             window.setLoading(false);
         }
     };
     window.forceClaimMaster = () => {
