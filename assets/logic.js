@@ -1,4 +1,3 @@
-javascript
 /* 
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
