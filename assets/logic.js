@@ -895,17 +895,21 @@ export function initHRNchat(customConfig = {}) {
             return false;
         }
         state.loginRetryCount = 0;
-        const {
-            data: {
-                user
-            }
-        } = await db.auth.getUser();
-        state.user = user;
-        if (user) {
+        
+        // FIX: Added safety for getUser call to prevent infinite load on failure
+        try {
+            const { data, error } = await db.auth.getUser();
+            if (error || !data?.user) return false;
+            state.user = data.user;
+        } catch (e) {
+            return false;
+        }
+
+        if (state.user) {
             const profileData = {
-                id: user.id,
-                full_name: user.user_metadata?.full_name,
-                avatar_url: user.user_metadata?.avatar_url,
+                id: state.user.id,
+                full_name: state.user.user_metadata?.full_name,
+                avatar_url: state.user.user_metadata?.avatar_url,
                 updated_at: new Date().toISOString()
             };
             await cacheAvatar(profileData);
@@ -915,8 +919,8 @@ export function initHRNchat(customConfig = {}) {
             id: email,
             pass_hash: hashInput,
             email: email,
-            metadata: user.user_metadata,
-            userId: user.id
+            metadata: state.user.user_metadata,
+            userId: state.user.id
         });
         return true;
     };
@@ -956,27 +960,35 @@ export function initHRNchat(customConfig = {}) {
             window.setLoading(true, "Connecting...");
         }
         
-        const storedEmail = localStorage.getItem('hrn_auth_email');
-        const storedPass = localStorage.getItem('hrn_auth_pass');
-        
-        if (storedEmail && storedPass) {
-            const success = await attemptLogin(storedEmail, storedPass);
-            if (success) {
-                setAppMode(false);
-                setupGlobalPresence(state.user.id);
-                window.nav('scr-lobby');
-                window.loadRooms();
-                window.toast("Connected.");
+        // FIX: Wrapped in try...finally to ensure setLoading(false) is always called
+        try {
+            const storedEmail = localStorage.getItem('hrn_auth_email');
+            const storedPass = localStorage.getItem('hrn_auth_pass');
+            
+            if (storedEmail && storedPass) {
+                const success = await attemptLogin(storedEmail, storedPass);
+                if (success) {
+                    setAppMode(false);
+                    setupGlobalPresence(state.user.id);
+                    window.nav('scr-lobby');
+                    window.loadRooms();
+                    window.toast("Connected.");
+                } else {
+                    window.toast("Connection failed.");
+                    setAppMode(true);
+                }
             } else {
-                window.toast("Connection failed.");
+                if (isAuthScreen) window.setLoading(false);
+                else {
+                    window.toast("No saved login found.");
+                    setAppMode(true);
+                }
             }
+        } catch (err) {
+            console.error("goOnline error", err);
+            window.toast("An error occurred.");
+        } finally {
             if (isAuthScreen) window.setLoading(false);
-        } else {
-            if (isAuthScreen) window.setLoading(false);
-            else {
-                window.toast("No saved login found.");
-                setAppMode(true);
-            }
         }
     };
 
@@ -2660,7 +2672,7 @@ export function initHRNchat(customConfig = {}) {
             const {
                 data: canAccess,
                 error: rpcError
-            } = await execQuery(db.rpc('can_access_room', {
+            } = await execQuery(db.rpc('can_access_room, {
                 p_room_id: id
             }));
             if (rpcError) throw rpcError;
@@ -2669,7 +2681,6 @@ export function initHRNchat(customConfig = {}) {
                 data,
                 error
             } = await execQuery(db.from('rooms').select('*').eq('id', id).single());
-            if (error) throw error;
             window.setLoading(false);
             if (data && data.id) await localDB.put('rooms', data);
             state.pending = {
@@ -2726,6 +2737,6 @@ export function initHRNchat(customConfig = {}) {
             window.toast("Network error.");
         }
     };
-   
+    
     init();
 }
