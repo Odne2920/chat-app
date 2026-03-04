@@ -1,4 +1,3 @@
-# _**NOT**_ ready for production yet.
 --- ---
 
 <a href="https://hrn-chat.github.io/" target="_blank">
@@ -18,25 +17,21 @@
 > [!IMPORTANT]
 > If you fork this project, consider giving it a star in the original repository!
 
-
-
 ## Features
-
 - One-time email code login (expires in 10 minutes)
-- Public open rooms + private password-protected rooms
-- Direct messages (1-on-1)
-- Edit or delete your messages (within 15 minutes)
-- See who is online right now (per room & total)
-- Message copying with one tap
-- Beautiful automatic date headers (Today • Yesterday • Monday • 15 Feb 2026)
-- Fully readable offline (previously received messages)
-- Minimal iOS-style design, smooth on mobile and desktop
-- Works in any modern browser — no installation needed
+- Open public rooms & private password-protected rooms
+- Direct messages (1-on-1 chats)
+- Edit or delete messages (within 15 minutes)
+- See who is online per room & total
+- Copy messages with one tap
+- Automatic date headers (Today • Yesterday • Monday • 15 Feb 2026)
+- Fully readable offline
+- End-to-end encryption (E2EE)
 
-## Security
+## Credits
+- GH: **HyperRushNet / hrn-chat** – App UI, main logic, improved logic, new features
 
-- Encryption happens in your browser only
-- No readable messages are ever stored on the server
-- Room passwords are checked without ever sending them to your device
-- Only one active tab at a time (prevents login confusion)
-- Designed to feel safe and predictable
+## License
+- MIT License - You can use, modify, and share this software.  
+- Original copyright notice must be included.
+
