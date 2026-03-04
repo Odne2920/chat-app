@@ -1114,11 +1114,13 @@ export function initHRNchat(customConfig = {}) {
         chatContainer.innerHTML = '';
         chatContainer.onscroll = handleScroll;
         
-        let roomData = cachedData;
+        let roomData = null;
 
+        // --- OFFLINE MODE ---
         if (state.isOfflineMode) {
-             if (!roomData || !roomData.allowed_users) roomData = await localDB.get('rooms', id);
+             roomData = await localDB.get('rooms', id);
              if (!roomData) { window.setLoading(false); return window.toast("Chat not found locally."); }
+             
              state.currentRoomData = roomData;
              const isDirect = roomData?.is_direct;
              state.currentRoomDisplay = await resolveRoomDisplay(roomData);
@@ -1126,11 +1128,15 @@ export function initHRNchat(customConfig = {}) {
              const avEl = $('chat-avatar-display');
              if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`;
              else avEl.innerText = state.currentRoomDisplay.name.charAt(0).toUpperCase();
+             
              const editBtn = $('info-edit-btn');
              if (!isDirect && roomData?.created_by === state.user.id) editBtn.style.display = 'flex';
              else editBtn.style.display = 'none';
+             
              const keySource = rawPassword ? (rawPassword + id) : id;
              await deriveKey(keySource, roomData?.salt, id);
+             
+             // Render local messages
              let localMessages = await localDB.getRoomMessages(id);
              let renderedHtml = '';
              if (localMessages.length > 0) {
@@ -1139,23 +1145,29 @@ export function initHRNchat(customConfig = {}) {
                  chatContainer.innerHTML = renderedHtml;
                  chatContainer.scrollTop = chatContainer.scrollHeight;
              }
+             
              checkChatEmpty();
              $('chat-input').style.display = 'block';
              $('send-btn').style.display = 'flex';
              setConnectionVisuals('offline');
              window.nav('scr-chat');
              window.setLoading(false);
-             return;
+             return; // Stop here for offline
         }
 
-        // Online Logic
-        try {
-            const { data: netRoom } = await execQuery(db.from('rooms').select('*').eq('id', id).single());
-            if (netRoom && netRoom.id) {
-                roomData = netRoom;
-                await localDB.put('rooms', roomData);
-            }
-        } catch (e) { /* Ignore if fails, proceed with passed data */ }
+        // --- ONLINE MODE ---
+        // Prefer cachedData passed from joinAttempt (which is fresh), otherwise fetch fresh
+        if (cachedData) {
+            roomData = cachedData;
+        } else {
+            try {
+                const { data: netRoom } = await execQuery(db.from('rooms').select('*').eq('id', id).single());
+                if (netRoom && netRoom.id) {
+                    roomData = netRoom;
+                    await localDB.put('rooms', roomData); // Update cache
+                }
+            } catch (e) { /* Ignore */ }
+        }
 
         if (!roomData) { window.setLoading(false); return window.toast("Chat not found."); }
         
@@ -1166,23 +1178,28 @@ export function initHRNchat(customConfig = {}) {
         const avEl = $('chat-avatar-display');
         if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`;
         else avEl.innerText = state.currentRoomDisplay.name.charAt(0).toUpperCase();
+        
         const editBtn = $('info-edit-btn');
         if (!isDirect && roomData?.created_by === state.user.id) editBtn.style.display = 'flex';
         else editBtn.style.display = 'none';
+
         const keySource = rawPassword ? (rawPassword + id) : id;
         await deriveKey(keySource, roomData?.salt, id);
 
+        // Fetch messages fresh
         let finalMessages = [];
         try {
-            // Cache Busting: Timestamp in header not directly supported, but we force a clean fetch
             const { data } = await execQuery(db.from('messages').select('*').eq('room_id', id).order('created_at', { ascending: false }).limit(CONFIG.maxMessages));
             if (data && data.length > 0) {
                 data.reverse();
                 const res = await workerExec('decryptHistory', { messages: data, keyId: id });
                 const validMsgs = res.results.filter(m => !m.error);
+                
+                // Hard Replace Cache
                 await localDB.clearRoomMessages(id);
                 const messagesWithRoomId = validMsgs.map(m => ({ ...m, room_id: id }));
                 await localDB.putAll('messages', messagesWithRoomId);
+                
                 finalMessages = validMsgs;
             } else { await localDB.clearRoomMessages(id); }
         } catch (e) { console.error("Fetch error", e); }
@@ -1225,6 +1242,7 @@ export function initHRNchat(customConfig = {}) {
     window.loadRooms = async () => {
         if (!state.user) return;
         const uid = state.user.id;
+        
         const processAndRender = async (rooms) => {
             const processed = [];
             for (const r of rooms) {
@@ -1245,7 +1263,7 @@ export function initHRNchat(customConfig = {}) {
 
         window.setLoading(true, "Syncing...");
         try {
-            // Hard Refresh: Fetch and Override
+            // Hard Refresh: Fetch and Override Local
             const { data: rooms, error } = await execQuery(
                 db.from('rooms').select('*').order('created_at', { ascending: false })
             );
@@ -1253,10 +1271,10 @@ export function initHRNchat(customConfig = {}) {
             if (error) throw error;
 
             if (rooms) {
-                await localDB.clear('rooms');
-                if (rooms.length > 0) await localDB.putAll('rooms', rooms);
+                await localDB.clear('rooms'); // Clear old cache
+                if (rooms.length > 0) await localDB.putAll('rooms', rooms); // Save fresh cache
                 await localDB.saveUserTree(uid, rooms);
-                await processAndRender(rooms);
+                await processAndRender(rooms); // Render fresh data
                 warmUpRoomImageCache();
             }
         } catch (e) {
@@ -1268,8 +1286,48 @@ export function initHRNchat(customConfig = {}) {
     };
 
     window.filterRooms = () => { const q = $('search-bar').value.toLowerCase(); const list = $('room-list'); const uid = state.user?.id; const filtered = state.allRooms.filter(r => { if (!r.is_direct && !r.is_visible) return false; const name = r.display_name || r.name || ''; if (!name.toLowerCase().includes(q)) return false; return true; }); if (filtered.length === 0) { list.innerHTML = ""; } else list.innerHTML = filtered.map(r => `<div class="room-card" onclick="window.joinAttempt('${r.id}')"><div class="chat-avatar" style="width:36px;height:36px;margin-right:10px;font-size:13px">${r.display_avatar ? `<img src="${r.display_avatar}">` : (r.display_name||'G').charAt(0)}</div><span class="room-name">${esc(r.display_name)}</span><span class="room-icon">${r.is_direct ? '<i data-lucide="user" style="width:14px;height:14px"></i>' : ''}${r.has_password ? '<i data-lucide="lock" style="width:14px;height:14px"></i>' : ''}</span></div>`).join(''); };
-    window.joinAttempt = async (id) => { const meta = await localDB.get('rooms', id); const openLocal = async () => { if (meta && meta.id) { state.pending = { id: meta.id, name: meta.name, salt: meta.salt }; if (meta.has_password) { window.nav('scr-gate'); } else { await window.openVault(meta.id, meta.name, null, meta.salt, meta); } } else { window.toast("Chat not found."); } }; if (state.isOfflineMode) { await openLocal(); return; } window.setLoading(true, "Accessing..."); try { const { data: canAccess, error: rpcError } = await execQuery(db.rpc('can_access_room', { p_room_id: id })); if (rpcError) throw rpcError; if (!canAccess) throw new Error("Access denied"); const { data, error } = await execQuery(db.from('rooms').select('*').eq('id', id).single()); if (error) throw error; window.setLoading(false); if (data && data.id) await localDB.put('rooms', data); state.pending = { id: data.id, name: data.name, salt: data.salt }; if (data.has_password) window.nav('scr-gate'); else window.openVault(data.id, data.name, null, data.salt, data); } catch (e) { window.setLoading(false); window.toast("Connection lost."); setAppMode(true); await openLocal(); } };
-    window.joinPrivate = async () => { if (!state.user) return window.toast("Please log in."); const id = $('join-id').value.trim(); if (!id) return; if (state.isOfflineMode) { const meta = await localDB.get('rooms', id); if (meta) window.joinAttempt(id); else window.toast("Connection required."); return; } window.setLoading(true, "Checking..."); try { const { data: canAccess } = await execQuery(db.rpc('can_access_room', { p_room_id: id })); if (!canAccess) { window.setLoading(false); return window.toast("Access denied."); } const { data } = await execQuery(db.from('rooms').select('*').eq('id', id).single()); window.setLoading(false); if (data) { await localDB.put('rooms', data); state.pending = { id: data.id, name: data.name, salt: data.salt }; if (data.has_password) window.nav('scr-gate'); else window.openVault(data.id, data.name, null, data.salt, data); } else window.toast("Chat not found."); } catch (e) { window.setLoading(false); window.toast("Network error."); } };
+    window.joinAttempt = async (id) => {
+        // Offline Logic: Only use local DB if explicitly offline
+        const openLocal = async () => {
+            const meta = await localDB.get('rooms', id);
+            if (meta && meta.id) {
+                state.pending = { id: meta.id, name: meta.name, salt: meta.salt };
+                if (meta.has_password) { window.nav('scr-gate'); } 
+                else { await window.openVault(meta.id, meta.name, null, meta.salt, meta); }
+            } else { window.toast("Chat not found locally."); }
+        };
+
+        if (state.isOfflineMode) {
+            await openLocal();
+            return;
+        }
+
+        // Online Logic: Fresh fetch only
+        window.setLoading(true, "Accessing...");
+        try {
+            const { data: canAccess, error: rpcError } = await execQuery(db.rpc('can_access_room', { p_room_id: id }));
+            if (rpcError) throw rpcError;
+            if (!canAccess) throw new Error("Access denied");
+
+            const { data, error } = await execQuery(db.from('rooms').select('*').eq('id', id).single());
+            if (error) throw error;
+            
+            window.setLoading(false);
+            
+            // Update cache for future offline use, but use 'data' (fresh) for now
+            if (data && data.id) await localDB.put('rooms', data);
+            
+            state.pending = { id: data.id, name: data.name, salt: data.salt };
+            if (data.has_password) window.nav('scr-gate');
+            else window.openVault(data.id, data.name, null, data.salt, data);
+            
+        } catch (e) {
+            window.setLoading(false);
+            window.toast("Connection lost.");
+            setAppMode(true); // Fallback to offline mode
+            await openLocal();
+        }
+    };    window.joinPrivate = async () => { if (!state.user) return window.toast("Please log in."); const id = $('join-id').value.trim(); if (!id) return; if (state.isOfflineMode) { const meta = await localDB.get('rooms', id); if (meta) window.joinAttempt(id); else window.toast("Connection required."); return; } window.setLoading(true, "Checking..."); try { const { data: canAccess } = await execQuery(db.rpc('can_access_room', { p_room_id: id })); if (!canAccess) { window.setLoading(false); return window.toast("Access denied."); } const { data } = await execQuery(db.from('rooms').select('*').eq('id', id).single()); window.setLoading(false); if (data) { await localDB.put('rooms', data); state.pending = { id: data.id, name: data.name, salt: data.salt }; if (data.has_password) window.nav('scr-gate'); else window.openVault(data.id, data.name, null, data.salt, data); } else window.toast("Chat not found."); } catch (e) { window.setLoading(false); window.toast("Network error."); } };
     const init = async () => {
         await localDB.init();
         monitorConnection();
