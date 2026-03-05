@@ -1081,7 +1081,7 @@ export function initHRNchat(customConfig = {}) {
 
     window.sendMsg = async (e) => {
         if (!e || !e.isTrusted) return; if (!state.user || !state.currentRoomId || state.processingAction) return;
-        if (state.isOfflineMode) return window.toast("Offline mode."); if (!state.isChatChannelReady) return; if (state.isCapacityBlocked) return window.toast("Server full."); if (!applyRateLimit()) return;
+        if (state.isOfflineMode) return window.toast("You are offline."); if (!state.isChatChannelReady) return; if (state.isCapacityBlocked) return window.toast("Server full."); if (!applyRateLimit()) return;
         const v = $('chat-input').value.trim(); if (!v) return; if (v.length > CONFIG.maxMessageLength) return window.toast(`Message too long (max ${CONFIG.maxMessageLength} chars).`);
         state.processingAction = true; $('chat-input').value = ''; state.lastMessageTime = Date.now();
         try { const enc = await encryptMessage(v, state.currentRoomId); const { data, error } = await db.from('messages').insert([{ room_id: state.currentRoomId, user_id: state.user.id, user_name: state.user.user_metadata?.full_name, content: enc }]).select().single(); if (error) window.toast("Failed to send."); } catch (err) { window.toast("Send failed."); }
@@ -1101,7 +1101,7 @@ export function initHRNchat(customConfig = {}) {
         }
         const success = await attemptLogin(em, p);
         if (success) { localStorage.setItem('hrn_auth_email', em); localStorage.setItem('hrn_auth_pass', p); setAppMode(false); if (state.user) setupGlobalPresence(state.user.id); window.nav('scr-lobby'); window.loadRooms(); window.toast("Connected."); }
-        else { window.toast("Invalid credentials or connection error."); }
+        else { window.toast("Invalid credentials!"); }
         window.setLoading(false); state.processingAction = false;
     };
 
@@ -1275,11 +1275,11 @@ export function initHRNchat(customConfig = {}) {
             if (storedEmail && storedPass) {
                 window.setLoading(true, "Auto-logging in..."); const success = await attemptLogin(storedEmail, storedPass); window.setLoading(false);
                 if (success) { setupGlobalPresence(state.user.id); window.nav('scr-lobby'); window.loadRooms(); }
-                else { const knownUser = await localDB.get('known_users', storedEmail); const hashInput = await sha256(storedPass + storedEmail); if (knownUser && knownUser.pass_hash === hashInput) { state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata }; setAppMode(true); window.nav('scr-lobby'); window.loadRooms(); window.toast("Offline mode."); } else { localStorage.removeItem('hrn_auth_email'); localStorage.removeItem('hrn_auth_pass'); window.nav('scr-start'); } }
+                else { const knownUser = await localDB.get('known_users', storedEmail); const hashInput = await sha256(storedPass + storedEmail); if (knownUser && knownUser.pass_hash === hashInput) { state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata }; setAppMode(true); window.nav('scr-lobby'); window.loadRooms(); window.toast("You are offline."); } else { localStorage.removeItem('hrn_auth_email'); localStorage.removeItem('hrn_auth_pass'); window.nav('scr-start'); } }
             } else window.nav('scr-start');
         } else {
             setAppMode(true); startInternetCheck();
-            if (storedEmail && storedPass) { const knownUser = await localDB.get('known_users', storedEmail); const hashInput = await sha256(storedPass + storedEmail); if (knownUser && knownUser.pass_hash === hashInput) { state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata }; window.nav('scr-lobby'); window.loadRooms(); window.toast("Offline mode."); } else { window.nav('scr-login'); $('l-email').value = storedEmail; $('l-pass').value = storedPass; } } else window.nav('scr-start');
+            if (storedEmail && storedPass) { const knownUser = await localDB.get('known_users', storedEmail); const hashInput = await sha256(storedPass + storedEmail); if (knownUser && knownUser.pass_hash === hashInput) { state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata }; window.nav('scr-lobby'); window.loadRooms(); window.toast("You are offline."); } else { window.nav('scr-login'); $('l-email').value = storedEmail; $('l-pass').value = storedPass; } } else window.nav('scr-start');
         }
         window.setLoading(false);
     };
