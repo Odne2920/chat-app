@@ -11,12 +11,12 @@ export function initHRNchat(customConfig = {}) {
         maxMessages: customConfig.maxMessages || 50,
         historyLoadLimit: customConfig.historyLoadLimit || 20,
         rateLimitMs: customConfig.rateLimitMs || 1000,
-        presenceHeartbeatMs: customConfig.presenceHeartbeatMs || 10000, // Dit is de 10s standaard voor heartbeats
+        presenceHeartbeatMs: customConfig.presenceHeartbeatMs || 10000, // Nu configureerbaar
         verificationCodeExpiry: customConfig.verificationCodeExpiry || 600,
         maxMessageLength: customConfig.maxMessageLength || 10000,
         proxyUrl: customConfig.proxyUrl || "https://vercel-serverless-hrn.vercel.app/api/CORSproxy.js?url=",
         requestTimeout: 3000,
-        backgroundDisconnectMs: customConfig.backgroundDisconnectMs || 10000 // Standaard 10s, maar jouw HTML overschrijft dit naar 1000
+        backgroundDisconnectMs: customConfig.backgroundDisconnectMs || 10000 // Nu configureerbaar
     };
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
     const DB_NAME = 'HRN_LOCAL_DB_6';
@@ -1126,7 +1126,7 @@ export function initHRNchat(customConfig = {}) {
                         user_id: myId,
                         online_at: new Date().toISOString()
                     });
-                }, CONFIG.presenceHeartbeatMs);
+                }, CONFIG.presenceHeartbeatMs); // Gebruikt de configureerbare waarde
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                 state.isPresenceSubscribed = false;
                 // FIX: Check !document.hidden to prevent reconnect loop in background
@@ -1202,7 +1202,7 @@ export function initHRNchat(customConfig = {}) {
                             console.error("WS Disconnect Error", e);
                         }
                     }
-                }, CONFIG.backgroundDisconnectMs);
+                }, CONFIG.backgroundDisconnectMs); // Gebruikt de configureerbare waarde
             } else if (document.visibilityState === 'visible') {
                 if (state.backgroundDisconnectTimer) clearTimeout(state.backgroundDisconnectTimer);
                 state.backgroundDisconnectTimer = null;
