@@ -23,11 +23,12 @@ export function initHRNchat(customConfig = {}) {
         verificationCodeExpiry: customConfig.verificationCodeExpiry || 600,
         maxMessageLength: customConfig.maxMessageLength || 10000,
         proxyUrl: customConfig.proxyUrl || "https://vercel-serverless-hrn.vercel.app/api/CORSproxy.js?url=",
-        requestTimeout: 3000
+        requestTimeout: 3000,
+        backgroundDisconnectMs: customConfig.backgroundDisconnectMs || 10000
     };
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
-    const DB_NAME = 'HRN_LOCAL_DB_5';
-    const DB_VERSION = 1;
+    const DB_NAME = 'HRN_LOCAL_DB_2';
+    const DB_VERSION = 10000;
     const state = {
         user: null,
         currentRoomId: null,
@@ -51,8 +52,6 @@ export function initHRNchat(customConfig = {}) {
         pending: null,
         lastCreated: null,
         lastCreatedPass: null,
-        isMasterTab: false,
-        tabId: sessionStorage.getItem('hrn_tab_id') || (sessionStorage.setItem('hrn_tab_id', crypto.randomUUID()), sessionStorage.getItem('hrn_tab_id')),
         processingAction: false,
         isLoadingHistory: false,
         oldestMessageTimestamp: null,
@@ -93,6 +92,8 @@ export function initHRNchat(customConfig = {}) {
         authListener: null,
         loginRetryCount: 0,
         internetCheckInterval: null,
+        backgroundDisconnectTimer: null,
+        isBackgroundDisconnectActive: false,
         ui: {
             isOverlayOpen: false,
             isContextOpen: false,
@@ -103,7 +104,6 @@ export function initHRNchat(customConfig = {}) {
     let toastVisible = false;
     let lastToastText = "";
     let lastToastTime = 0;
-    const tabChannel = new BroadcastChannel('hrn_tab_sync');
     const fetchWithTimeout = async (promise, ms = CONFIG.requestTimeout) => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), ms);
@@ -784,7 +784,7 @@ export function initHRNchat(customConfig = {}) {
         state.globalPresenceChannel = db.channel('global-presence', {
             config: {
                 presence: {
-                    key: userId || `listener_${state.tabId}`
+                    key: userId || `listener_${Date.now()}`
                 }
             }
         });
@@ -810,7 +810,7 @@ export function initHRNchat(customConfig = {}) {
             }
         }).subscribe(async (status) => {
             if (status === 'SUBSCRIBED') {
-                if (userId && state.isMasterTab) await state.globalPresenceChannel.track({
+                if (userId) await state.globalPresenceChannel.track({
                     user_id: userId,
                     online_at: new Date().toISOString()
                 });
@@ -860,7 +860,7 @@ export function initHRNchat(customConfig = {}) {
         container.scrollTop = container.scrollHeight;
     };
     const attemptHardReconnect = () => {
-        if (!state.user || state.isOfflineMode || state.isCapacityBlocked || !state.isMasterTab) return;
+        if (!state.user || state.isOfflineMode || state.isCapacityBlocked) return;
         if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
         if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
         state.reconnectTimer = null;
@@ -1086,7 +1086,7 @@ export function initHRNchat(customConfig = {}) {
                     clearTimeout(state.connectionTimeoutTimer);
                     state.connectionTimeoutTimer = null;
                 }
-                if (!state.isOfflineMode && !state.isCapacityBlocked) {
+                if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive) {
                     state.isChatChannelReady = false;
                     if (!state.isReconnecting) {
                         state.isReconnecting = true;
@@ -1133,7 +1133,7 @@ export function initHRNchat(customConfig = {}) {
                 }, CONFIG.presenceHeartbeatMs);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                 state.isPresenceSubscribed = false;
-                if (!state.isOfflineMode && !state.isCapacityBlocked) {
+                if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive) {
                     state.isReconnecting = true;
                     setConnectionVisuals('connecting');
                     state.reconnectTimer = setTimeout(attemptHardReconnect, 1000);
@@ -1186,17 +1186,28 @@ export function initHRNchat(customConfig = {}) {
         window.addEventListener('online', onlineHandler);
         window.addEventListener('offline', offlineHandler);
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') {
-                if (state.isCapacityBlocked) return;
-                if (state.isOfflineMode) return;
-                if (!state.isMasterTab) {
-                    window.forceClaimMaster();
-                } else {
-                    if (!state.isChatChannelReady && state.currentRoomId) {
-                        attemptHardReconnect();
-                    } else if (navigator.onLine && !state.globalPresenceReady) {
-                        window.goOnline();
+            if (state.isCapacityBlocked) return;
+            if (document.visibilityState === 'hidden') {
+                if (state.backgroundDisconnectTimer) clearTimeout(state.backgroundDisconnectTimer);
+                state.backgroundDisconnectTimer = setTimeout(() => {
+                    if (!state.isOfflineMode && !state.isCapacityBlocked) {
+                        cleanupChannels(false);
+                        state.isBackgroundDisconnectActive = true;
                     }
+                }, CONFIG.backgroundDisconnectMs);
+            } else if (document.visibilityState === 'visible') {
+                if (state.backgroundDisconnectTimer) clearTimeout(state.backgroundDisconnectTimer);
+                state.backgroundDisconnectTimer = null;
+                if (state.isBackgroundDisconnectActive) {
+                    state.isBackgroundDisconnectActive = false;
+                    if (state.user && !state.isOfflineMode) {
+                        setupGlobalPresence(state.user.id);
+                        if (state.currentRoomId) attemptHardReconnect();
+                    }
+                } else if (!state.isChatChannelReady && state.currentRoomId) {
+                    attemptHardReconnect();
+                } else if (navigator.onLine && !state.globalPresenceReady) {
+                    window.goOnline();
                 }
             }
         });
@@ -1536,94 +1547,6 @@ export function initHRNchat(customConfig = {}) {
         input.value = '';
         window.toast("User added.");
     };
-    const checkMaster = () => new Promise((resolve) => {
-        let masterFound = false;
-        const handler = (ev) => {
-            if (ev.data.type === 'PONG_MASTER') masterFound = true;
-        };
-        tabChannel.addEventListener('message', handler);
-        tabChannel.postMessage({
-            type: 'PING_MASTER',
-            id: state.tabId
-        });
-        setTimeout(() => {
-            tabChannel.removeEventListener('message', handler);
-            resolve(masterFound);
-        }, 300);
-    });
-    const handleDuplicateTab = () => {
-        const overlay = $('block-overlay');
-        if (overlay) {
-            overlay.innerHTML = `
-                <i data-lucide="copy" style="width:48px;height:48px;margin-bottom:24px;color:var(--warning)"></i>
-                <h1 style="margin-bottom: 20px" class="title">Duplicate Tab</h1>
-                <p class="subtitle" style="text-align:center">This tab is inactive to prevent sync issues.<br>Switch tabs to make it active.</p>
-            `;
-            overlay.classList.add('active');
-        }
-        cleanupChannels(false);
-        if (state.globalPresenceChannel) {
-            state.globalPresenceChannel.unsubscribe();
-            state.globalPresenceChannel = null;
-        }
-        state.isMasterTab = false;
-        setConnectionVisuals('offline');
-    };
-    window.forceClaimMaster = () => {
-        const overlay = $('block-overlay');
-        if (overlay) overlay.classList.remove('active');
-        if (!state.isMasterTab) {
-            state.isMasterTab = true;
-            tabChannel.postMessage({
-                type: 'CLAIM_MASTER',
-                id: state.tabId
-            });
-            if (state.user) {
-                setupGlobalPresence(state.user.id);
-                if (state.currentRoomId) attemptHardReconnect();
-            }
-        }
-    };
-    tabChannel.onmessage = (ev) => {
-        const {
-            type,
-            id
-        } = ev.data;
-        if (type === 'CLAIM_MASTER' && id !== state.tabId) {
-            if (state.isMasterTab) {
-                if (id > state.tabId) {
-                    handleDuplicateTab();
-                } else {
-                    tabChannel.postMessage({
-                        type: 'CLAIM_MASTER',
-                        id: state.tabId
-                    });
-                }
-            }
-        }
-        if (type === 'PING_MASTER') {
-            if (state.isMasterTab) {
-                tabChannel.postMessage({
-                    type: 'PONG_MASTER',
-                    id: state.tabId
-                });
-            }
-        }
-        if (type === 'ABDICATE') {
-            if (!state.isMasterTab) {
-                window.forceClaimMaster();
-            }
-        }
-    };
-    const beforeUnloadHandler = () => {
-        if (state.isMasterTab) {
-            tabChannel.postMessage({
-                type: 'ABDICATE',
-                id: state.tabId
-            });
-        }
-    };
-    window.addEventListener('beforeunload', beforeUnloadHandler);
     window.openOverlay = () => {
         const oc = $('overlay-container');
         if (oc) {
@@ -2734,16 +2657,6 @@ export function initHRNchat(customConfig = {}) {
             await warmUpAvatarCache();
             await warmUpRoomImageCache();
         }
-        const isSlave = await checkMaster();
-        if (isSlave) {
-            handleDuplicateTab();
-            return;
-        }
-        state.isMasterTab = true;
-        tabChannel.postMessage({
-            type: 'CLAIM_MASTER',
-            id: state.tabId
-        });
         const storedEmail = localStorage.getItem('hrn_auth_email');
         const storedPass = localStorage.getItem('hrn_auth_pass');
         if (navigator.onLine) {
