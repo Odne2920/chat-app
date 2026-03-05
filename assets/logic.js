@@ -26,7 +26,7 @@ export function initHRNchat(customConfig = {}) {
         requestTimeout: 3000
     };
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
-    const DB_NAME = 'HRN_LOCAL_DB_2';
+    const DB_NAME = 'HRN_LOCAL_DB_5';
     const DB_VERSION = 1;
     const state = {
         user: null,
