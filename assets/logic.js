@@ -11,7 +11,6 @@ export function initHRNchat(customConfig = {}) {
         rateLimitMs: customConfig.rateLimitMs || 1000,
         verificationCodeExpiry: customConfig.verificationCodeExpiry || 600,
         maxMessageLength: customConfig.maxMessageLength || 5000,
-        proxyUrl: customConfig.proxyUrl || "https://vercel-serverless-hrn.vercel.app/api/CORSproxy.js?url=",
         requestTimeout: 3000,
         backgroundDisconnectMs: customConfig.backgroundDisconnectMs || 5000
     };
@@ -19,6 +18,7 @@ export function initHRNchat(customConfig = {}) {
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
     const DB_NAME = 'HRN_LOCAL_DB_6';
     const DB_VERSION = 1;
+    const MAX_CACHE_SIZE = 100;
 
     const state = {
         user: null,
@@ -35,7 +35,6 @@ export function initHRNchat(customConfig = {}) {
         globalOnlineCount: 0,
         sessionStartTime: null,
         isPresenceSubscribed: false,
-        lastReconnectAttempt: 0,
         pending: null,
         lastCreated: null,
         lastCreatedPass: null,
@@ -44,7 +43,6 @@ export function initHRNchat(customConfig = {}) {
         oldestMessageTimestamp: null,
         hasMoreHistory: true,
         lastMessageTime: 0,
-        isConnecting: false,
         isChatChannelReady: false,
         selectedAllowedUsers: [],
         currentPickerContext: null,
@@ -56,46 +54,40 @@ export function initHRNchat(customConfig = {}) {
         createType: 'group',
         currentRoomPassword: null,
         reconnectTimer: null,
-        isReconnecting: false,
         deleteConfirmTimeout: null,
         profileCache: {},
+        profileCacheKeys: [],
         roomImageCache: {},
         editingMessage: null,
         contextTarget: null,
-        carouselIndex: 0,
         connectionStrength: '4g',
-        isBackgrounded: false,
         globalPresenceReady: false,
         connectionTimeoutTimer: null,
         presenceUpdateTimer: null,
         isNavigating: false,
         isOfflineMode: false,
-        isProcessingQueue: false,
         isCapacityBlocked: false,
         authListener: null,
-        loginRetryCount: 0,
         internetCheckInterval: null,
         backgroundDisconnectTimer: null,
         isBackgroundDisconnectActive: false,
-        ui: { isOverlayOpen: false, isContextOpen: false, overlayCloseLocked: false }
+        isHardReconnecting: false,
+        ui: { isOverlayOpen: false, isContextOpen: false, overlayCloseLocked: false },
+        dom: {}
     };
 
-    let toastQueue = [];
-    let toastVisible = false;
-    let lastToastText = "";
-    let lastToastTime = 0;
+    let toastQueue = [], toastVisible = false, lastToastText = "", lastToastTime = 0;
+
+    const $ = id => state.dom[id] || (state.dom[id] = document.getElementById(id));
+    const esc = t => { const p = document.createElement('p'); p.textContent = t; return p.innerHTML; };
+    const truncateText = (text, maxLength = 20) => !text ? "" : text.length > maxLength ? text.substring(0, maxLength) + "..." : text;
+    const getTimeFromDate = (d) => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
     const fetchWithTimeout = async (promise, ms = CONFIG.requestTimeout) => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), ms);
-        try {
-            const result = await promise;
-            clearTimeout(timeout);
-            return result;
-        } catch (error) {
-            clearTimeout(timeout);
-            throw error;
-        }
+        try { const result = await promise; clearTimeout(timeout); return result; } 
+        catch (error) { clearTimeout(timeout); throw error; }
     };
 
     const execQuery = async (queryPromise) => {
@@ -111,10 +103,7 @@ export function initHRNchat(customConfig = {}) {
             return new Promise((resolve, reject) => {
                 const request = indexedDB.open(DB_NAME, DB_VERSION);
                 request.onerror = (e) => reject(request.error);
-                request.onsuccess = () => {
-                    this.db = request.result;
-                    resolve();
-                };
+                request.onsuccess = () => { this.db = request.result; resolve(); };
                 request.onupgradeneeded = (e) => {
                     const db = e.target.result;
                     const tx = e.target.transaction;
@@ -156,9 +145,9 @@ export function initHRNchat(customConfig = {}) {
             return new Promise((res, rej) => {
                 if (!this.db) return rej("DB not init");
                 const tx = this.db.transaction(store, 'readwrite');
-                const req = tx.objectStore(store).put(val);
-                req.onsuccess = () => res();
-                req.onerror = () => rej(req.error);
+                tx.objectStore(store).put(val);
+                tx.oncomplete = () => res();
+                tx.onerror = () => rej(tx.error);
             });
         },
         async putAll(store, vals) {
@@ -167,9 +156,7 @@ export function initHRNchat(customConfig = {}) {
                 if (!this.db) return rej("DB not init");
                 const tx = this.db.transaction(store, 'readwrite');
                 const os = tx.objectStore(store);
-                vals.forEach(v => {
-                    if (v && v.id) os.put(v);
-                });
+                vals.forEach(v => { if (v && v.id) os.put(v); });
                 tx.oncomplete = () => res();
                 tx.onerror = () => rej(tx.error);
             });
@@ -178,18 +165,18 @@ export function initHRNchat(customConfig = {}) {
             return new Promise((res, rej) => {
                 if (!this.db) return res();
                 const tx = this.db.transaction(store, 'readwrite');
-                const req = tx.objectStore(store).clear();
-                req.onsuccess = () => res();
-                req.onerror = () => rej(req.error);
+                tx.objectStore(store).clear();
+                tx.oncomplete = () => res();
+                tx.onerror = () => rej(tx.error);
             });
         },
         async delete(store, key) {
             return new Promise((res, rej) => {
                 if (!this.db) return res();
                 const tx = this.db.transaction(store, 'readwrite');
-                const req = tx.objectStore(store).delete(key);
-                req.onsuccess = () => res();
-                req.onerror = () => rej(req.error);
+                tx.objectStore(store).delete(key);
+                tx.oncomplete = () => res();
+                tx.onerror = () => rej(tx.error);
             });
         },
         async getRoomMessages(roomId) {
@@ -203,13 +190,7 @@ export function initHRNchat(customConfig = {}) {
                 const store = tx.objectStore('messages');
                 const index = store.index('room_id');
                 const req = index.openCursor(IDBKeyRange.only(roomId));
-                req.onsuccess = (e) => {
-                    const cursor = e.target.result;
-                    if (cursor) {
-                        cursor.delete();
-                        cursor.continue();
-                    }
-                };
+                req.onsuccess = (e) => { const cursor = e.target.result; if (cursor) { cursor.delete(); cursor.continue(); } };
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);
             });
@@ -217,20 +198,13 @@ export function initHRNchat(customConfig = {}) {
         async saveUserTree(userId, rooms) {
             return this.put('user_tree', { user_id: userId, room_ids: rooms.map(r => r.id), timestamp: Date.now() });
         },
-        async getUserTree(userId) {
-            return this.get('user_tree', userId);
-        }
+        async getUserTree(userId) { return this.get('user_tree', userId); }
     };
 
     const db = createClient(CONFIG.supabaseUrl, CONFIG.supabaseKey, {
         auth: { persistSession: false, autoRefreshToken: true },
         realtime: { params: { eventsPerSecond: 10 } }
     });
-
-    const esc = t => { const p = document.createElement('p'); p.textContent = t; return p.innerHTML; };
-    const truncateText = (text, maxLength = 20) => !text ? "" : text.length > maxLength ? text.substring(0, maxLength) + "..." : text;
-    const $ = id => document.getElementById(id);
-    const getTimeFromDate = (d) => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
     const setAppMode = (offline) => {
         state.isOfflineMode = offline;
@@ -250,45 +224,11 @@ export function initHRNchat(customConfig = {}) {
     };
 
     const updateSendButtonState = () => {
-        const btn = $('send-btn');
-        const input = $('chat-input');
+        const btn = $('send-btn'); const input = $('chat-input');
         if (!btn || !input) return;
-        if (state.isOfflineMode) {
-            btn.disabled = true; btn.style.opacity = "0.5"; input.disabled = true; input.placeholder = "You are offline.";
-        } else {
-            const isReady = state.isChatChannelReady;
-            if (isReady && !state.isCapacityBlocked) {
-                btn.disabled = false; btn.style.opacity = "1"; input.disabled = false; input.placeholder = "Message...";
-            } else {
-                btn.disabled = true; btn.style.opacity = "0.5"; input.disabled = true; input.placeholder = "Connecting...";
-            }
-        }
-    };
-
-    const updatePresenceUI = () => {
-        const roomCountEl = $('room-user-count');
-        const infoRoomEl = $('info-room-count');
-        const infoGlobalEl = $('info-global-count');
-        let dotColor = 'var(--text-mute)';
-        if (state.isOfflineMode) {
-            if (infoGlobalEl) infoGlobalEl.innerText = "Local";
-            if (roomCountEl) roomCountEl.innerText = "-";
-            if (infoRoomEl) infoRoomEl.innerText = "-";
-        } else {
-            let count = state.lastKnownOnlineCount || 0;
-            let displayRoomText = count;
-            if (state.currentRoomData?.is_direct) {
-                if (count === 1) { displayRoomText = "Offline"; dotColor = 'var(--text-mute)'; }
-                else if (count === 2) { displayRoomText = "Online"; dotColor = 'var(--success)'; }
-                else { displayRoomText = "-"; dotColor = 'var(--text-mute)'; }
-            } else { dotColor = 'var(--success)'; }
-            
-            if (infoGlobalEl) infoGlobalEl.innerText = `${state.globalOnlineCount}/${CONFIG.maxUsers}`;
-            if (roomCountEl) roomCountEl.innerText = displayRoomText;
-            if (infoRoomEl) infoRoomEl.innerText = displayRoomText;
-        }
-        const dot = roomCountEl?.previousElementSibling;
-        if (dot && dot.classList.contains('online-dot')) dot.style.background = dotColor;
+        const disable = state.isOfflineMode || !state.isChatChannelReady || state.isCapacityBlocked;
+        btn.disabled = disable; btn.style.opacity = disable ? "0.5" : "1"; input.disabled = disable;
+        input.placeholder = state.isOfflineMode ? "You are offline." : (disable ? "Connecting..." : "Message...");
     };
 
     const schedulePresenceUpdate = () => {
@@ -299,171 +239,111 @@ export function initHRNchat(customConfig = {}) {
         }, 500);
     };
 
+    const updatePresenceUI = () => {
+        const roomCountEl = $('room-user-count'); const infoRoomEl = $('info-room-count'); const infoGlobalEl = $('info-global-count');
+        let dotColor = 'var(--text-mute)';
+        if (state.isOfflineMode) {
+            if (infoGlobalEl) infoGlobalEl.innerText = "Local";
+            if (roomCountEl) roomCountEl.innerText = "-";
+            if (infoRoomEl) infoRoomEl.innerText = "-";
+        } else {
+            let count = state.lastKnownOnlineCount || 0; let displayRoomText = count;
+            if (state.currentRoomData?.is_direct) {
+                if (count === 1) { displayRoomText = "Offline"; dotColor = 'var(--text-mute)'; }
+                else if (count === 2) { displayRoomText = "Online"; dotColor = 'var(--success)'; }
+                else { displayRoomText = "-"; dotColor = 'var(--text-mute)'; }
+            } else { dotColor = 'var(--success)'; }
+            if (infoGlobalEl) infoGlobalEl.innerText = `${state.globalOnlineCount}/${CONFIG.maxUsers}`;
+            if (roomCountEl) roomCountEl.innerText = displayRoomText;
+            if (infoRoomEl) infoRoomEl.innerText = displayRoomText;
+        }
+        const dot = roomCountEl?.previousElementSibling;
+        if (dot && dot.classList.contains('online-dot')) dot.style.background = dotColor;
+    };
+
     const processToastQueue = () => {
         if (toastVisible || toastQueue.length === 0) return;
-        const msg = toastQueue[0];
-        const now = Date.now();
-        if (msg === lastToastText && (now - lastToastTime < 3000)) {
-            toastQueue.shift();
-            if (toastQueue.length === 0) return;
-            processToastQueue();
-            return;
-        }
-        toastVisible = true;
-        const confirmedMsg = toastQueue.shift();
-        lastToastText = confirmedMsg;
-        lastToastTime = now;
-        const c = $('toast-container');
-        const t = document.createElement('div');
-        t.className = 'toast-item';
-        t.innerText = confirmedMsg;
+        const msg = toastQueue[0]; const now = Date.now();
+        if (msg === lastToastText && (now - lastToastTime < 3000)) { toastQueue.shift(); if (toastQueue.length === 0) return; return processToastQueue(); }
+        toastVisible = true; const confirmedMsg = toastQueue.shift(); lastToastText = confirmedMsg; lastToastTime = now;
+        const c = $('toast-container'); const t = document.createElement('div'); t.className = 'toast-item'; t.innerText = confirmedMsg;
         const spawnTime = Date.now();
-        t.onclick = () => {
-            if (Date.now() - spawnTime < 200) return;
-            t.style.opacity = '0';
-            setTimeout(() => { t.remove(); toastVisible = false; processToastQueue(); }, 400);
-        };
+        t.onclick = () => { if (Date.now() - spawnTime < 200) return; t.style.opacity = '0'; setTimeout(() => { t.remove(); toastVisible = false; processToastQueue(); }, 400); };
         c.appendChild(t);
-        setTimeout(() => {
-            if (t.parentNode) {
-                t.style.opacity = '0';
-                setTimeout(() => { if (t.parentNode) t.remove(); toastVisible = false; processToastQueue(); }, 400);
-            }
-        }, 3000);
+        setTimeout(() => { if (t.parentNode) { t.style.opacity = '0'; setTimeout(() => { if (t.parentNode) t.remove(); toastVisible = false; processToastQueue(); }, 400); } }, 3000);
     };
 
-    window.toast = m => {
-        if (m === lastToastText && (Date.now() - lastToastTime < 2000)) return;
-        toastQueue.push(m);
-        processToastQueue();
-    };
-
+    window.toast = m => { if (m === lastToastText && (Date.now() - lastToastTime < 2000)) return; toastQueue.push(m); processToastQueue(); };
     window.setLoading = (s, text = null) => {
-        const loader = $('loader-overlay');
-        const loaderText = $('loader-text');
+        const loader = $('loader-overlay'); const loaderText = $('loader-text');
         if (!loader) return;
-        if (s) loader.classList.add('active');
-        else loader.classList.remove('active');
-        if (text) loaderText.innerText = text;
-        else loaderText.innerText = "Loading...";
+        if (s) loader.classList.add('active'); else loader.classList.remove('active');
+        if (text) loaderText.innerText = text; else loaderText.innerText = "Loading...";
     };
 
-    const safeAwait = async (promise) => {
-        try { return [await promise, null]; } 
-        catch (error) { return [null, error]; }
-    };
+    const safeAwait = async (promise) => { try { return [await promise, null]; } catch (error) { return [null, error]; } };
 
     const cacheAvatar = async (profile) => {
         if (!profile) return profile;
         await localDB.put('profiles', profile);
+        if (!state.profileCache[profile.id]) { state.profileCacheKeys.push(profile.id); }
         state.profileCache[profile.id] = profile;
-        return profile;
-    };
-
-    const cacheRoomImage = async (room) => {
-        if (!room) return room;
-        const dbRoom = await localDB.get('rooms', room.id);
-        if (dbRoom) { 
-            const updatedRoom = { ...dbRoom, ...room };
-            await localDB.put('rooms', updatedRoom); 
-        } else {
-            await localDB.put('rooms', room);
+        if (state.profileCacheKeys.length > MAX_CACHE_SIZE) {
+            const oldKey = state.profileCacheKeys.shift();
+            delete state.profileCache[oldKey];
         }
-        return room;
-    };
-
-    const warmUpAvatarCache = async () => {
-        if (state.isOfflineMode) return;
-        const profiles = await localDB.getAll('profiles');
-        if (!profiles || profiles.length === 0) return;
-        profiles.forEach(p => {
-            if (p && p.id) state.profileCache[p.id] = p;
-        });
+        return profile;
     };
 
     const getProfiles = async (userIds) => {
         if (!userIds || userIds.length === 0) return [];
-        const uniqueIds = [...new Set(userIds)];
-        const missingIds = uniqueIds.filter(id => !state.profileCache[id]);
-        
+        const uniqueIds = [...new Set(userIds)]; const missingIds = uniqueIds.filter(id => !state.profileCache[id]);
         if (missingIds.length > 0 && !state.isOfflineMode) {
             try {
-                const { data: profiles, error } = await db.from('profiles')
-                    .select('id, full_name, avatar_url, updated_at')
-                    .in('id', missingIds);
-                
-                if (profiles) {
-                    await Promise.all(profiles.map(p => {
-                        state.profileCache[p.id] = p;
-                        return cacheAvatar(p);
-                    }));
-                }
+                const { data: profiles, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').in('id', missingIds);
+                if (profiles) await Promise.all(profiles.map(p => cacheAvatar(p)));
             } catch (e) { console.warn("Batch profile fetch failed", e); }
         }
-        
         return uniqueIds.map(id => state.profileCache[id]).filter(Boolean);
     };
 
     const getProfile = async (userId) => {
         if (!userId) return null;
         if (state.profileCache[userId]) return state.profileCache[userId];
-        
         let profile = await localDB.get('profiles', userId);
-        
         if (!state.isOfflineMode) {
             try {
                 const { data: serverProfile, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', userId).single();
                 if (serverProfile) {
                     const localTime = profile?.updated_at ? new Date(profile.updated_at).getTime() : 0;
                     const serverTime = serverProfile.updated_at ? new Date(serverProfile.updated_at).getTime() : 0;
-                    const needsUpdate = !profile || serverTime > localTime || !profile.full_name;
-                    
-                    if (needsUpdate) {
-                        profile = serverProfile;
-                        await cacheAvatar(profile);
-                    }
+                    if (!profile || serverTime > localTime || !profile.full_name) { profile = serverProfile; await cacheAvatar(profile); }
                 }
-            } catch (e) {
-                console.warn("Profile fetch failed", e);
-            }
+            } catch (e) { console.warn("Profile fetch failed", e); }
         }
-        
-        if (profile) {
-            state.profileCache[userId] = profile;
-        }
+        if (profile) state.profileCache[userId] = profile;
         return profile;
     };
 
     const resolveRoomDisplay = async (room) => {
         if (!room) return { name: 'Chat', avatar: null };
-        if (!room.is_direct) {
-            let avatar = room.avatar_url || null;
-            return { name: room.name, avatar: avatar };
-        }
+        if (!room.is_direct) return { name: room.name, avatar: room.avatar_url || null };
         const myId = state.user?.id;
-        if (!myId) return { name: 'Direct Message', avatar: null };
-        if (!room.allowed_users || room.allowed_users.length === 0) return { name: 'Direct Message', avatar: null };
-        const otherIds = room.allowed_users.filter(id => id !== myId && id !== '*');
-        const otherId = otherIds.length > 0 ? otherIds[0] : null;
+        if (!myId || !room.allowed_users || room.allowed_users.length === 0) return { name: 'Direct Message', avatar: null };
+        const otherId = room.allowed_users.find(id => id !== myId && id !== '*');
         if (!otherId) return { name: 'Direct Message', avatar: null };
         const profile = await getProfile(otherId);
         if (!profile) return { name: 'Unknown User', avatar: null };
-        const avatar = profile.avatar_url || null;
-        return { name: profile.full_name || 'User', avatar: avatar };
+        return { name: profile.full_name || 'User', avatar: profile.avatar_url || null };
     };
 
     const updateGateUI = async (room) => {
         if (!room) return;
         const display = await resolveRoomDisplay(room);
-        
-        const nameEl = $('gate-room-name');
-        const avatarEl = $('gate-room-avatar');
-        
-        if (nameEl) nameEl.innerText = display.name;
-        
-        if (avatarEl) {
-            if (display.avatar) avatarEl.innerHTML = `<img src="${display.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">`;
-            else avatarEl.innerHTML = `<span style="font-size:24px;font-weight:700;color:var(--accent)">${display.name.charAt(0)}</span>`;
+        if ($('gate-room-name')) $('gate-room-name').innerText = display.name;
+        if ($('gate-room-avatar')) {
+            if (display.avatar) $('gate-room-avatar').innerHTML = `<img src="${display.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">`;
+            else $('gate-room-avatar').innerHTML = `<span style="font-size:24px;font-weight:700;color:var(--accent)">${display.name.charAt(0)}</span>`;
         }
     };
 
@@ -485,8 +365,7 @@ export function initHRNchat(customConfig = {}) {
                     const encoded = encoder.encode(payload.text); 
                     const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, self.keys[payload.keyId], encoded); 
                     const combined = new Uint8Array(iv.length + ciphertext.byteLength); 
-                    combined.set(iv, 0); 
-                    combined.set(new Uint8Array(ciphertext), iv.length); 
+                    combined.set(iv, 0); combined.set(new Uint8Array(ciphertext), iv.length); 
                     const base64 = btoa(String.fromCharCode(...combined)); 
                     self.postMessage({ id, type: 'encrypted', result: base64 }); 
                 } else if (type === 'decryptHistory') { 
@@ -556,27 +435,18 @@ export function initHRNchat(customConfig = {}) {
 
     const getConnectionTimeout = () => {
         const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-        if (connection) {
-            const type = connection.effectiveType;
-            if (type === '4g') return 5000;
-            if (type === '3g') return 10000;
-            if (type === '2g') return 20000;
-            if (type === 'slow-2g') return 30000;
-        }
+        const type = connection?.effectiveType;
+        if (type === '4g') return 5000; if (type === '3g') return 10000; if (type === '2g') return 20000; if (type === 'slow-2g') return 30000;
         return 8000;
     };
 
     const handleServerFull = async () => {
         if (state.isCapacityBlocked) return;
         state.isCapacityBlocked = true;
-        await fullDisconnect(); 
+        await fullDisconnect();
         const overlay = $('block-overlay');
         if (overlay) {
-            overlay.innerHTML = `
-                <i data-lucide="users" style="width:48px;height:48px;margin-bottom:24px;color:var(--warning)"></i>
-                <h1 style="margin-bottom: 20px" class="title">Server Full</h1>
-                <p class="subtitle" style="text-align:center">Max concurrent user count (${CONFIG.maxUsers}) was reached.<br>Please try again later.</p>
-            `;
+            overlay.innerHTML = `<i data-lucide="users" style="width:48px;height:48px;margin-bottom:24px;color:var(--warning)"></i><h1 style="margin-bottom: 20px" class="title">Server Full</h1><p class="subtitle" style="text-align:center">Max concurrent user count (${CONFIG.maxUsers}) was reached.<br>Please try again later.</p>`;
             overlay.classList.add('active');
         }
     };
@@ -587,56 +457,37 @@ export function initHRNchat(customConfig = {}) {
         if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
         state.reconnectTimer = null;
         
-        if (state.presenceChannel) {
-            try { await state.presenceChannel.unsubscribe(); } catch (e) { console.warn("Presence unsub error", e); }
-            state.presenceChannel = null;
-            state.isPresenceSubscribed = false;
-        }
-        if (state.chatChannel) {
-            try { await state.chatChannel.unsubscribe(); } catch (e) { console.warn("Chat unsub error", e); }
-            state.chatChannel = null;
-        }
-        if (!keepGlobal && state.globalPresenceChannel) {
-            try { await state.globalPresenceChannel.unsubscribe(); } catch (e) { console.warn("Global unsub error", e); }
-            state.globalPresenceChannel = null;
-            state.globalPresenceReady = false;
-        }
+        if (state.presenceChannel) { try { await state.presenceChannel.unsubscribe(); } catch (e) {} state.presenceChannel = null; state.isPresenceSubscribed = false; }
+        if (state.chatChannel) { try { await state.chatChannel.unsubscribe(); } catch (e) {} state.chatChannel = null; }
+        if (!keepGlobal && state.globalPresenceChannel) { try { await state.globalPresenceChannel.unsubscribe(); } catch (e) {} state.globalPresenceChannel = null; state.globalPresenceReady = false; }
         state.isChatChannelReady = false;
     };
 
     const fullDisconnect = async () => {
         await cleanupChannels(false);
-        try {
-            if (db.realtime && typeof db.realtime.disconnect === 'function') {
-                db.realtime.disconnect();
-            }
-        } catch (e) { console.warn("Realtime disconnect error", e); }
+        try { if (db.realtime && typeof db.realtime.disconnect === 'function') db.realtime.disconnect(); } catch (e) {}
     };
 
     const queryOnlineCountImmediately = async () => {
         if (!state.presenceChannel) return;
         const presState = state.presenceChannel.presenceState();
-        const allPresences = Object.values(presState).flat();
-        const uniqueUserIds = new Set(allPresences.map(p => p.user_id));
+        const uniqueUserIds = new Set(Object.values(presState).flat().map(p => p.user_id));
         state.lastKnownOnlineCount = uniqueUserIds.size;
         schedulePresenceUpdate();
     };
 
     const trackPresence = async (channel, userId) => {
         if (!channel || !userId) return;
-        try {
-            await channel.track({ user_id: userId, online_at: new Date().toISOString() });
-        } catch (e) { console.warn("Track failed", e); }
+        try { await channel.track({ user_id: userId, online_at: new Date().toISOString() }); } catch (e) {}
     };
 
     const setupGlobalPresence = async (userId) => {
         if (state.isOfflineMode || state.isCapacityBlocked) return;
-        if (state.globalPresenceChannel) {
-            try { await state.globalPresenceChannel.unsubscribe(); } catch(e) {}
-            state.globalPresenceChannel = null;
-        }
+        if (state.globalPresenceChannel) { try { await state.globalPresenceChannel.unsubscribe(); } catch(e) {} state.globalPresenceChannel = null; }
+        
         state.globalPresenceChannel = db.channel('global-presence', { config: { presence: { key: userId || `listener_${Date.now()}` } } });
         state.globalPresenceChannel.on('presence', { event: 'sync' }, async () => {
+            if (!state.globalPresenceChannel) return;
             const presState = state.globalPresenceChannel.presenceState();
             const users = [];
             Object.keys(presState).forEach(key => { presState[key].forEach(pres => { users.push(pres); }); });
@@ -651,16 +502,13 @@ export function initHRNchat(customConfig = {}) {
                 }
             }
         }).subscribe(async (status) => {
-            if (status === 'SUBSCRIBED') {
-                if (userId) await trackPresence(state.globalPresenceChannel, userId);
-            }
+            if (status === 'SUBSCRIBED' && userId) await trackPresence(state.globalPresenceChannel, userId);
         });
     };
 
     const hardRefreshRoomMessages = async (roomId) => {
         if (!roomId || !state.currentRoomData) return;
-        const container = $('chat-messages');
-        let messages = [];
+        const container = $('chat-messages'); let messages = [];
         try {
             const { data, error } = await execQuery(db.from('messages').select('*').eq('room_id', roomId).order('created_at', { ascending: false }).limit(CONFIG.maxMessages));
             if (error) throw error;
@@ -672,38 +520,34 @@ export function initHRNchat(customConfig = {}) {
                 await localDB.putAll('messages', messages.map(m => ({ ...m, room_id: roomId })));
             }
         } catch (e) { return; }
-        container.innerHTML = '';
-        state.lastRenderedDateLabel = null;
+        container.innerHTML = ''; state.lastRenderedDateLabel = null;
         if (messages.length > 0) {
             state.oldestMessageTimestamp = messages[0].created_at;
             let html = '', prev = null;
-            messages.forEach(m => {
-                html += renderMsg(m, prev, state.currentRoomData?.is_direct);
-                prev = m;
-            });
+            messages.forEach(m => { html += renderMsg(m, prev, state.currentRoomData?.is_direct); prev = m; });
             container.innerHTML = html;
         }
         container.scrollTop = container.scrollHeight;
     };
 
     const attemptHardReconnect = () => {
-        if (!state.currentRoomId) return;
-        if (document.hidden) return;
-        if (!state.user || state.isOfflineMode || state.isCapacityBlocked) return;
-        
+        if (!state.currentRoomId || document.hidden || !state.user || state.isOfflineMode || state.isCapacityBlocked) return;
+        if (state.isHardReconnecting) return;
+        state.isHardReconnecting = true;
+
         if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
         if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
         state.reconnectTimer = null;
         
         cleanupChannels(true);
-        state.isReconnecting = true;
         setConnectionVisuals('connecting');
         
         const timeout = getConnectionTimeout();
         state.connectionTimeoutTimer = setTimeout(() => {
-            state.isReconnecting = false;
+            state.isHardReconnecting = false;
             attemptHardReconnect();
         }, timeout);
+        
         initRoomPresence(state.currentRoomId);
         setupChatChannel(state.currentRoomId);
     };
@@ -713,68 +557,39 @@ export function initHRNchat(customConfig = {}) {
             const { error } = await execQuery(db.auth.signInWithPassword({ email, password: pass }));
             if (error) throw error;
         } catch (e) { return false; }
-        state.loginRetryCount = 0;
         const { data: { user } } = await db.auth.getUser();
         state.user = user;
-        if (user) {
-            const profileData = { id: user.id, full_name: user.user_metadata?.full_name, avatar_url: user.user_metadata?.avatar_url, updated_at: new Date().toISOString() };
-            await cacheAvatar(profileData);
-        }
+        if (user) { const profileData = { id: user.id, full_name: user.user_metadata?.full_name, avatar_url: user.user_metadata?.avatar_url, updated_at: new Date().toISOString() }; await cacheAvatar(profileData); }
         const hashInput = await sha256(pass + email);
         await localDB.put('known_users', { id: email, pass_hash: hashInput, email: email, metadata: user.user_metadata, userId: user.id });
         return true;
     };
 
     window.goOnline = async () => {
-        stopInternetCheck();
-        state.isCapacityBlocked = false;
-        const overlay = $('block-overlay');
-        if (overlay) overlay.classList.remove('active');
-        
+        stopInternetCheck(); state.isCapacityBlocked = false;
+        const overlay = $('block-overlay'); if (overlay) overlay.classList.remove('active');
         if (state.user) {
-            const storedEmail = localStorage.getItem('hrn_auth_email');
-            const storedPass = localStorage.getItem('hrn_auth_pass');
+            const storedEmail = localStorage.getItem('hrn_auth_email'); const storedPass = localStorage.getItem('hrn_auth_pass');
             if (storedEmail && storedPass) {
                 const success = await attemptLogin(storedEmail, storedPass);
-                if (success) {
-                    setAppMode(false);
-                    setupGlobalPresence(state.user.id);
-                    if (state.currentRoomId) attemptHardReconnect();
-                    window.loadRooms();
-                    window.toast("Connected.");
-                } else { setAppMode(true); }
+                if (success) { setAppMode(false); setupGlobalPresence(state.user.id); if (state.currentRoomId) attemptHardReconnect(); window.loadRooms(); window.toast("Connected."); }
+                else { setAppMode(true); }
             } else { setAppMode(true); }
             return;
         }
         const activeScreen = document.querySelector('.screen.active');
         const isAuthScreen = ['scr-login', 'scr-register', 'scr-start', 'scr-verify'].includes(activeScreen?.id);
         if (isAuthScreen) { setAppMode(false); window.setLoading(true, "Connecting..."); }
-        const storedEmail = localStorage.getItem('hrn_auth_email');
-        const storedPass = localStorage.getItem('hrn_auth_pass');
+        const storedEmail = localStorage.getItem('hrn_auth_email'); const storedPass = localStorage.getItem('hrn_auth_pass');
         if (storedEmail && storedPass) {
             const success = await attemptLogin(storedEmail, storedPass);
-            if (success) {
-                setAppMode(false);
-                setupGlobalPresence(state.user.id);
-                window.nav('scr-lobby');
-                window.loadRooms();
-                window.toast("Connected.");
-            } else { window.toast("Connection failed."); }
+            if (success) { setAppMode(false); setupGlobalPresence(state.user.id); window.nav('scr-lobby'); window.loadRooms(); window.toast("Connected."); }
+            else { window.toast("Connection failed."); }
             if (isAuthScreen) window.setLoading(false);
-        } else {
-            if (isAuthScreen) window.setLoading(false);
-            else { window.toast("No saved login found."); setAppMode(true); }
-        }
+        } else { if (isAuthScreen) window.setLoading(false); else { window.toast("No saved login found."); setAppMode(true); } }
     };
 
-    window.stayOffline = async () => {
-        const overlay = $('block-overlay');
-        if (overlay) overlay.classList.remove('active');
-        await fullDisconnect(); 
-        setAppMode(true);
-        window.toast("Offline mode active.");
-        if (state.user) window.loadRooms();
-    };
+    window.stayOffline = async () => { const overlay = $('block-overlay'); if (overlay) overlay.classList.remove('active'); await fullDisconnect(); setAppMode(true); window.toast("Offline mode active."); if (state.user) window.loadRooms(); };
 
     const setupChatChannel = (id) => {
         if (state.isOfflineMode) return;
@@ -788,20 +603,16 @@ export function initHRNchat(customConfig = {}) {
                     const decRes = await workerExec('decryptSingle', { content: m.content, keyId: id });
                     if (decRes.result) {
                         const msgObj = { ...m, ...decRes.result, room_id: m.room_id };
-                        const container = $('chat-messages');
-                        const lastMsg = container.querySelector('.msg:last-of-type');
-                        let prevMsg = null;
-                        if (lastMsg) prevMsg = { user_id: lastMsg.dataset.uid, created_at: lastMsg.dataset.time };
+                        const container = $('chat-messages'); const lastMsg = container.querySelector('.msg:last-of-type');
+                        let prevMsg = null; if (lastMsg) prevMsg = { user_id: lastMsg.dataset.uid, created_at: lastMsg.dataset.time };
                         container.insertAdjacentHTML('beforeend', renderMsg(msgObj, prevMsg, isDirect));
-                        container.scrollTop = container.scrollHeight;
-                        checkChatEmpty();
+                        container.scrollTop = container.scrollHeight; checkChatEmpty();
                         await localDB.put('messages', msgObj);
                     }
                 } catch (e) {}
             }
         }).on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `room_id=eq.${id}` }, async (payload) => {
-            const m = payload.new;
-            const msgEl = document.querySelector(`.msg[data-id="${m.id}"]`);
+            const m = payload.new; const msgEl = document.querySelector(`.msg[data-id="${m.id}"]`);
             if (msgEl) {
                 try {
                     const decRes = await workerExec('decryptSingle', { content: m.content, keyId: id });
@@ -810,12 +621,10 @@ export function initHRNchat(customConfig = {}) {
                         msgEl.classList.add('msg-deleted');
                         const contentDiv = msgEl.querySelector('div:not(.msg-header)');
                         if (contentDiv) { contentDiv.className = 'deleted-text'; contentDiv.innerText = "Message deleted"; }
-                        const timeSpan = msgEl.querySelector('.msg-time');
-                        if (timeSpan) { const editedTag = timeSpan.querySelector('.edited-tag'); if (editedTag) editedTag.remove(); }
+                        const timeSpan = msgEl.querySelector('.msg-time'); if (timeSpan) { const editedTag = timeSpan.querySelector('.edited-tag'); if (editedTag) editedTag.remove(); }
                         msgEl.dataset.text = "";
                     } else if (decRes.result) {
-                        const prevEl = msgEl.previousElementSibling;
-                        let prevData = null;
+                        const prevEl = msgEl.previousElementSibling; let prevData = null;
                         if (prevEl && prevEl.classList.contains('msg')) prevData = { user_id: prevEl.dataset.uid, created_at: prevEl.dataset.time };
                         msgEl.outerHTML = renderMsg({ ...m, ...decRes.result, room_id: m.room_id, updated_at: m.updated_at }, prevData, isDirect);
                     }
@@ -827,8 +636,7 @@ export function initHRNchat(customConfig = {}) {
             state.isChatChannelReady = (status === 'SUBSCRIBED');
             if (status === 'SUBSCRIBED') {
                 if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
-                state.connectionTimeoutTimer = null;
-                state.isReconnecting = false;
+                state.connectionTimeoutTimer = null; state.isHardReconnecting = false;
                 if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
                 setConnectionVisuals('connected');
                 hardRefreshRoomMessages(id);
@@ -837,11 +645,7 @@ export function initHRNchat(customConfig = {}) {
                 state.connectionTimeoutTimer = null;
                 if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive && !document.hidden && state.currentRoomId) {
                     state.isChatChannelReady = false;
-                    if (!state.isReconnecting) {
-                        state.isReconnecting = true;
-                        setConnectionVisuals('connecting');
-                        state.reconnectTimer = setTimeout(attemptHardReconnect, 2000);
-                    }
+                    if (!state.isHardReconnecting) { state.isHardReconnecting = true; setConnectionVisuals('connecting'); state.reconnectTimer = setTimeout(attemptHardReconnect, 2000); }
                 }
             }
         });
@@ -852,23 +656,13 @@ export function initHRNchat(customConfig = {}) {
         if (state.presenceChannel) state.presenceChannel.unsubscribe();
         const myId = state.user.id;
         state.presenceChannel = db.channel(`room_presence:${roomId}`, { config: { presence: { key: myId } } });
-        state.presenceChannel.on('presence', { event: 'sync' }, () => {
-            if (!state.presenceChannel) return;
-            queryOnlineCountImmediately();
-        }).subscribe(async (status, err) => {
-            if (status === 'SUBSCRIBED') {
-                if (!state.presenceChannel) return;
-                state.isPresenceSubscribed = true;
-                state.isReconnecting = false;
-                queryOnlineCountImmediately();
-                await trackPresence(state.presenceChannel, myId);
-                queryOnlineCountImmediately();
-            } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        state.presenceChannel.on('presence', { event: 'sync' }, () => { if (!state.presenceChannel) return; queryOnlineCountImmediately(); })
+        .subscribe(async (status, err) => {
+            if (status === 'SUBSCRIBED') { if (!state.presenceChannel) return; state.isPresenceSubscribed = true; state.isHardReconnecting = false; queryOnlineCountImmediately(); await trackPresence(state.presenceChannel, myId); queryOnlineCountImmediately(); }
+            else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                 state.isPresenceSubscribed = false;
                 if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive && !document.hidden && state.currentRoomId) {
-                    state.isReconnecting = true;
-                    setConnectionVisuals('connecting');
-                    state.reconnectTimer = setTimeout(attemptHardReconnect, 2000);
+                    state.isHardReconnecting = true; setConnectionVisuals('connecting'); state.reconnectTimer = setTimeout(attemptHardReconnect, 2000);
                 }
             }
         });
@@ -879,11 +673,7 @@ export function initHRNchat(customConfig = {}) {
         state.internetCheckInterval = setInterval(async () => {
             try {
                 const response = await fetch('./assets/internet-test-file.txt', { cache: 'no-store', headers: { 'Pragma': 'no-cache' } });
-                if (response.ok) {
-                    if (state.internetCheckInterval) clearInterval(state.internetCheckInterval);
-                    state.internetCheckInterval = null;
-                    if (state.isOfflineMode) window.goOnline();
-                }
+                if (response.ok) { stopInternetCheck(); if (state.isOfflineMode) window.goOnline(); }
             } catch (e) {}
         }, 5000);
     };
@@ -891,18 +681,14 @@ export function initHRNchat(customConfig = {}) {
     const stopInternetCheck = () => { if (state.internetCheckInterval) { clearInterval(state.internetCheckInterval); state.internetCheckInterval = null; } };
 
     const monitorConnection = () => {
-        const onlineHandler = () => {
-            stopInternetCheck();
-            if (state.isOfflineMode) window.goOnline();
-            else { setConnectionVisuals('connecting'); if (state.currentRoomId) attemptHardReconnect(); else setConnectionVisuals('connected'); }
-        };
+        const onlineHandler = () => { stopInternetCheck(); if (state.isOfflineMode) window.goOnline(); else { setConnectionVisuals('connecting'); if (state.currentRoomId) attemptHardReconnect(); else setConnectionVisuals('connected'); } };
         const offlineHandler = async () => {
             setAppMode(true);
             if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
             if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
-            state.isReconnecting = false;
-            state.globalPresenceReady = false; 
-            try { await fullDisconnect(); } catch(e) { console.warn("Disconnect error", e); }
+            state.isHardReconnecting = false;
+            state.globalPresenceReady = false;
+            try { await fullDisconnect(); } catch(e) {}
             startInternetCheck();
         };
         window.addEventListener('online', onlineHandler);
@@ -910,18 +696,13 @@ export function initHRNchat(customConfig = {}) {
         document.addEventListener('visibilitychange', async () => {
             if (state.isCapacityBlocked) return;
             if (document.visibilityState === 'hidden') {
-                if(state.reconnectTimer) clearTimeout(state.reconnectTimer);
-                state.reconnectTimer = null;
+                if(state.reconnectTimer) clearTimeout(state.reconnectTimer); state.reconnectTimer = null;
                 if (state.backgroundDisconnectTimer) clearTimeout(state.backgroundDisconnectTimer);
                 state.backgroundDisconnectTimer = setTimeout(async () => {
-                    if (!state.isOfflineMode && !state.isCapacityBlocked) {
-                        await fullDisconnect(); 
-                        state.isBackgroundDisconnectActive = true;
-                    }
+                    if (!state.isOfflineMode && !state.isCapacityBlocked) { await fullDisconnect(); state.isBackgroundDisconnectActive = true; }
                 }, CONFIG.backgroundDisconnectMs);
             } else if (document.visibilityState === 'visible') {
-                if (state.backgroundDisconnectTimer) clearTimeout(state.backgroundDisconnectTimer);
-                state.backgroundDisconnectTimer = null;
+                if (state.backgroundDisconnectTimer) clearTimeout(state.backgroundDisconnectTimer); state.backgroundDisconnectTimer = null;
                 if (state.isBackgroundDisconnectActive) {
                     state.isBackgroundDisconnectActive = false;
                     if (state.user && !state.isOfflineMode) {
@@ -929,281 +710,104 @@ export function initHRNchat(customConfig = {}) {
                         setupGlobalPresence(state.user.id);
                         if (state.currentRoomId) attemptHardReconnect();
                     }
-                } else if (!state.isChatChannelReady && state.currentRoomId) {
-                    attemptHardReconnect();
-                } else if (navigator.onLine && !state.globalPresenceReady) {
-                    window.goOnline();
-                }
+                } else if (!state.isChatChannelReady && state.currentRoomId) { attemptHardReconnect(); }
+                else if (navigator.onLine && !state.globalPresenceReady) { window.goOnline(); }
                 
                 if (state.presenceChannel && state.user) await trackPresence(state.presenceChannel, state.user.id);
                 if (state.globalPresenceChannel && state.user) await trackPresence(state.globalPresenceChannel, state.user.id);
             }
         });
-        
-        window.addEventListener('beforeunload', async () => {
-            await fullDisconnect();
-        });
+        window.addEventListener('beforeunload', async () => { await fullDisconnect(); });
     };
 
     const showContextMenu = (e, msgEl) => {
-        if (!msgEl || !state.user) return;
-        if (msgEl.classList.contains('msg-deleted')) return;
-        e.preventDefault();
-        e.stopPropagation();
+        if (!msgEl || !state.user || msgEl.classList.contains('msg-deleted')) return;
+        e.preventDefault(); e.stopPropagation();
         const msgData = { id: msgEl.dataset.id, user_id: msgEl.dataset.uid, created_at: msgEl.dataset.time, text: msgEl.dataset.text };
-        const menu = $('context-menu');
-        const editBtn = $('ctx-edit');
-        const deleteBtn = $('ctx-delete');
-        const copyBtn = $('ctx-copy');
+        const menu = $('context-menu'); const editBtn = $('ctx-edit'); const deleteBtn = $('ctx-delete'); const copyBtn = $('ctx-copy');
         const isOwner = msgData.user_id === state.user.id;
-        const msgDate = new Date(msgData.created_at);
-        const now = new Date();
-        const diffMinutes = (now - msgDate) / 60000;
-        const canEdit = isOwner && diffMinutes < 15;
-        const canDelete = isOwner;
-        editBtn.style.display = canEdit ? 'flex' : 'none';
-        deleteBtn.style.display = canDelete ? 'flex' : 'none';
+        const msgDate = new Date(msgData.created_at); const now = new Date(); const diffMinutes = (now - msgDate) / 60000;
+        editBtn.style.display = (isOwner && diffMinutes < 15) ? 'flex' : 'none';
+        deleteBtn.style.display = isOwner ? 'flex' : 'none';
         copyBtn.style.display = 'flex';
         state.contextTarget = msgData;
-        let x = e.clientX || e.touches?.[0]?.clientX;
-        let y = e.clientY || e.touches?.[0]?.clientY;
-        menu.style.left = `${x}px`;
-        menu.style.top = `${y}px`;
+        let x = e.clientX || e.touches?.[0]?.clientX; let y = e.clientY || e.touches?.[0]?.clientY;
+        menu.style.left = `${x}px`; menu.style.top = `${y}px`;
         setTimeout(() => {
             const rect = menu.getBoundingClientRect();
             if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 10}px`;
             if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 10}px`;
-            menu.classList.add('active');
-            state.ui.isContextOpen = true;
+            menu.classList.add('active'); state.ui.isContextOpen = true;
         }, 10);
     };
 
-    const hideContextMenu = () => {
-        const menu = $('context-menu');
-        if (menu) menu.classList.remove('active');
-        state.contextTarget = null;
-        state.ui.isContextOpen = false;
-    };
+    const hideContextMenu = () => { const menu = $('context-menu'); if (menu) menu.classList.remove('active'); state.contextTarget = null; state.ui.isContextOpen = false; };
 
-    $('ctx-edit').onclick = (e) => {
-        e.stopPropagation();
-        if (!state.contextTarget) return;
-        state.editingMessage = state.contextTarget;
-        $('edit-msg-input').value = state.contextTarget.text;
-        window.showOverlayView('edit-message');
-        window.openOverlay();
-        hideContextMenu();
-    };
-
-    $('ctx-copy').onclick = (e) => {
-        e.stopPropagation();
-        if (!state.contextTarget) return;
-        navigator.clipboard.writeText(state.contextTarget.text);
-        window.toast("Copied.");
-        hideContextMenu();
-    };
-
-    $('ctx-delete').onclick = async (e) => {
-        e.stopPropagation();
-        if (!state.contextTarget || !state.user) return;
-        const idToDelete = state.contextTarget.id;
-        hideContextMenu();
-        window.setLoading(true, "Deleting...");
-        const { error } = await db.from('messages').update({ content: '/' }).eq('id', idToDelete);
-        if (error) window.toast("Failed to delete.");
-        window.setLoading(false);
-    };
+    $('ctx-edit').onclick = (e) => { e.stopPropagation(); if (!state.contextTarget) return; state.editingMessage = state.contextTarget; $('edit-msg-input').value = state.contextTarget.text; window.showOverlayView('edit-message'); window.openOverlay(); hideContextMenu(); };
+    $('ctx-copy').onclick = (e) => { e.stopPropagation(); if (!state.contextTarget) return; navigator.clipboard.writeText(state.contextTarget.text); window.toast("Copied."); hideContextMenu(); };
+    $('ctx-delete').onclick = async (e) => { e.stopPropagation(); if (!state.contextTarget || !state.user) return; const idToDelete = state.contextTarget.id; hideContextMenu(); window.setLoading(true, "Deleting..."); const { error } = await db.from('messages').update({ content: '/' }).eq('id', idToDelete); if (error) window.toast("Failed to delete."); window.setLoading(false); };
 
     window.saveEditMessage = async () => {
-        if (!state.editingMessage) return;
-        const v = $('edit-msg-input').value.trim();
-        if (!v) return window.toast("Message is empty.");
-        const msgDate = new Date(state.editingMessage.created_at);
-        const now = new Date();
-        if ((now - msgDate) / 60000 >= 15) {
-            window.toast("Edit time expired.");
-            window.closeOverlay();
-            state.editingMessage = null;
-            return;
-        }
+        if (!state.editingMessage) return; const v = $('edit-msg-input').value.trim(); if (!v) return window.toast("Message is empty.");
+        const msgDate = new Date(state.editingMessage.created_at); const now = new Date();
+        if ((now - msgDate) / 60000 >= 15) { window.toast("Edit time expired."); window.closeOverlay(); state.editingMessage = null; return; }
         window.setLoading(true, "Saving...");
-        try {
-            const enc = await encryptMessage(v, state.currentRoomId);
-            const { error } = await db.from('messages').update({ content: enc }).eq('id', state.editingMessage.id);
-            if (error) window.toast("Failed to edit.");
-            else window.toast("Message updated.");
-        } catch (e) { window.toast("Encryption failed."); }
-        state.editingMessage = null;
-        window.setLoading(false);
-        window.closeOverlay();
+        try { const enc = await encryptMessage(v, state.currentRoomId); const { error } = await db.from('messages').update({ content: enc }).eq('id', state.editingMessage.id); if (error) window.toast("Failed to edit."); else window.toast("Message updated."); } catch (e) { window.toast("Encryption failed."); }
+        state.editingMessage = null; window.setLoading(false); window.closeOverlay();
     };
 
     document.addEventListener('click', (e) => {
-        if (state.ui.isContextOpen) {
-            const menu = $('context-menu');
-            if (menu && !menu.contains(e.target)) hideContextMenu();
-        }
-        if (state.ui.isOverlayOpen && !state.ui.overlayCloseLocked) {
-            const overlay = $('overlay-container');
-            if (overlay && e.target === overlay) window.closeOverlay();
-        }
+        if (state.ui.isContextOpen) { const menu = $('context-menu'); if (menu && !menu.contains(e.target)) hideContextMenu(); }
+        if (state.ui.isOverlayOpen && !state.ui.overlayCloseLocked) { const overlay = $('overlay-container'); if (overlay && e.target === overlay) window.closeOverlay(); }
     });
 
     const chatContainer = $('chat-messages');
-    chatContainer.addEventListener('touchstart', (e) => {
-        const msg = e.target.closest('.msg');
-        if (!msg) return;
-        state.longPressTimer = setTimeout(() => { showContextMenu(e, msg); }, 500);
-    }, { passive: true });
+    chatContainer.addEventListener('touchstart', (e) => { const msg = e.target.closest('.msg'); if (!msg) return; state.longPressTimer = setTimeout(() => { showContextMenu(e, msg); }, 500); }, { passive: true });
     chatContainer.addEventListener('touchend', () => clearTimeout(state.longPressTimer));
     chatContainer.addEventListener('touchmove', () => clearTimeout(state.longPressTimer));
-    chatContainer.addEventListener('contextmenu', (e) => {
-        const msg = e.target.closest('.msg');
-        if (msg) { e.preventDefault(); showContextMenu(e, msg); }
-    });
+    chatContainer.addEventListener('contextmenu', (e) => { const msg = e.target.closest('.msg'); if (msg) { e.preventDefault(); showContextMenu(e, msg); } });
 
-    const updateAccessSummary = (prefix) => {
-        const summaryEl = $(`${prefix}-access-summary`);
-        if (!summaryEl) return;
-        const count = state.selectedAllowedUsers.length;
-        const text = count === 0 ? "Public Room" : `${count} User${count > 1 ? 's' : ''}`;
-        summaryEl.innerHTML = `<span class="c-main">${text}</span><i data-lucide="chevron-right" class="w-16 h-16"></i>`;
-    };
+    const updateAccessSummary = (prefix) => { const summaryEl = $(`${prefix}-access-summary`); if (!summaryEl) return; const count = state.selectedAllowedUsers.length; const text = count === 0 ? "Public Room" : `${count} User${count > 1 ? 's' : ''}`; summaryEl.innerHTML = `<span class="c-main">${text}</span><i data-lucide="chevron-right" class="w-16 h-16"></i>`; };
 
     const updateStepUI = (context) => {
-        const current = state.currentStep[context];
-        const indicator = $(`${context}-step-indicator`);
-        if (!indicator) return;
-        indicator.querySelectorAll('.step-dot').forEach((dot, index) => {
-            if (index < current) dot.classList.add('active');
-            else dot.classList.remove('active');
-        });
+        const current = state.currentStep[context]; const indicator = $(`${context}-step-indicator`); if (!indicator) return;
+        indicator.querySelectorAll('.step-dot').forEach((dot, index) => { if (index < current) dot.classList.add('active'); else dot.classList.remove('active'); });
         if (context === 'reg') {
-            $('reg-step-1').classList.toggle('active', current === 1);
-            $('reg-step-2').classList.toggle('active', current === 2);
-            $('reg-step-3').classList.toggle('active', current === 3);
+            $('reg-step-1').classList.toggle('active', current === 1); $('reg-step-2').classList.toggle('active', current === 2); $('reg-step-3').classList.toggle('active', current === 3);
             if (current === 3) initAvatarCarousel();
-        } else {
-            $(`${context}-step-1`).classList.toggle('active', current === 1);
-            $(`${context}-step-2`).classList.toggle('active', current === 2);
-        }
+        } else { $(`${context}-step-1`).classList.toggle('active', current === 1); $(`${context}-step-2`).classList.toggle('active', current === 2); }
     };
 
-    const initAvatarCarousel = () => {
-        if (!state.selectedAvatar) state.selectedAvatar = AVATARS[0];
-        updateCarouselPreview();
-    };
+    const initAvatarCarousel = () => { if (!state.selectedAvatar) state.selectedAvatar = AVATARS[0]; updateCarouselPreview(); };
+    const updateCarouselPreview = () => { const preview = $('avatar-preview-el'); if (state.selectedAvatar) preview.innerHTML = `<img src="${state.selectedAvatar}">`; };
 
-    const updateCarouselPreview = () => {
-        const preview = $('avatar-preview-el');
-        if (state.selectedAvatar) preview.innerHTML = `<img src="${state.selectedAvatar}">`;
-    };
-
-    window.carouselNav = (direction) => {
-        let index = AVATARS.indexOf(state.selectedAvatar);
-        if (index === -1) index = 0;
-        index += direction;
-        if (index < 0) index = AVATARS.length - 1;
-        if (index >= AVATARS.length) index = 0;
-        state.selectedAvatar = AVATARS[index];
-        $('r-avatar-url').value = '';
-        updateCarouselPreview();
-    };
-
+    window.carouselNav = (direction) => { let index = AVATARS.indexOf(state.selectedAvatar); if (index === -1) index = 0; index += direction; if (index < 0) index = AVATARS.length - 1; if (index >= AVATARS.length) index = 0; state.selectedAvatar = AVATARS[index]; $('r-avatar-url').value = ''; updateCarouselPreview(); };
     window.handleAvatarUpload = (event) => {
-        const file = event.target.files[0];
-        if (file) {
+        const file = event.target.files[0]; if (file) {
             const reader = new FileReader();
             reader.onload = (e) => {
                 const img = new Image();
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    const size = 200; canvas.width = size; canvas.height = size;
-                    const ctx = canvas.getContext('2d');
-                    const scale = Math.max(size / img.width, size / img.height);
-                    const x = (size - img.width * scale) / 2;
-                    const y = (size - img.height * scale) / 2;
-                    ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
-                    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                    state.selectedAvatar = dataUrl;
-                    AVATARS.push(dataUrl);
-                    $('r-avatar-url').value = '';
-                    updateCarouselPreview();
-                    window.toast("Avatar uploaded.");
-                };
-                img.onerror = () => window.toast("Invalid image.");
-                img.src = e.target.result;
+                img.onload = () => { const canvas = document.createElement('canvas'); const size = 200; canvas.width = size; canvas.height = size; const ctx = canvas.getContext('2d'); const scale = Math.max(size / img.width, size / img.height); const x = (size - img.width * scale) / 2; const y = (size - img.height * scale) / 2; ctx.drawImage(img, x, y, img.width * scale, img.height * scale); const dataUrl = canvas.toDataURL('image/jpeg', 0.85); state.selectedAvatar = dataUrl; AVATARS.push(dataUrl); $('r-avatar-url').value = ''; updateCarouselPreview(); window.toast("Avatar uploaded."); };
+                img.onerror = () => window.toast("Invalid image."); img.src = e.target.result;
             };
             reader.readAsDataURL(file);
         }
     };
 
-    window.selectCreateType = (type) => {
-        state.createType = type;
-        document.querySelectorAll('.type-card').forEach(el => el.classList.remove('selected'));
-        $(`type-${type}`).classList.add('selected');
-    };
-
-    window.nextRegStep = () => {
-        if (state.currentStep.reg === 1) {
-            const em = $('r-email').value, p = $('r-pass').value;
-            if (!em || p.length < 8) return window.toast("Invalid email or password.");
-        }
-        if (state.currentStep.reg === 2) {
-            const n = $('r-name').value;
-            if (!n) return window.toast("Name required.");
-        }
-        state.currentStep.reg++;
-        updateStepUI('reg');
-    };
-
-    window.prevRegStep = () => {
-        state.currentStep.reg--;
-        updateStepUI('reg');
-    };
-
+    window.selectCreateType = (type) => { state.createType = type; document.querySelectorAll('.type-card').forEach(el => el.classList.remove('selected')); $(`type-${type}`).classList.add('selected'); };
+    window.nextRegStep = () => { if (state.currentStep.reg === 1) { const em = $('r-email').value, p = $('r-pass').value; if (!em || p.length < 8) return window.toast("Invalid email or password."); } if (state.currentStep.reg === 2) { const n = $('r-name').value; if (!n) return window.toast("Name required."); } state.currentStep.reg++; updateStepUI('reg'); };
+    window.prevRegStep = () => { state.currentStep.reg--; updateStepUI('reg'); };
     window.nextCreateStep = () => {
-        state.currentStep.create = 2;
-        updateStepUI('create');
-        const groupFields = $('create-group-fields');
-        const directFields = $('create-direct-fields');
-        const accessSummary = $('create-access-summary');
-        const titleEl = $('create-step2-title');
-        const subEl = $('create-step2-sub');
+        state.currentStep.create = 2; updateStepUI('create');
+        const groupFields = $('create-group-fields'); const directFields = $('create-direct-fields'); const accessSummary = $('create-access-summary'); const titleEl = $('create-step2-title'); const subEl = $('create-step2-sub');
         if (!groupFields || !directFields || !accessSummary || !titleEl || !subEl) return;
-        if (state.createType === 'direct') {
-            groupFields.classList.add('dn');
-            directFields.classList.remove('dn');
-            accessSummary.classList.add('dn');
-            titleEl.innerText = "Direct Message";
-            subEl.innerText = "Who are you messaging?";
-        } else {
-            groupFields.classList.remove('dn');
-            directFields.classList.add('dn');
-            accessSummary.classList.remove('dn');
-            titleEl.innerText = "Setup";
-            subEl.innerText = "Details";
-        }
+        if (state.createType === 'direct') { groupFields.classList.add('dn'); directFields.classList.remove('dn'); accessSummary.classList.add('dn'); titleEl.innerText = "Direct Message"; subEl.innerText = "Who are you messaging?"; }
+        else { groupFields.classList.remove('dn'); directFields.classList.add('dn'); accessSummary.classList.remove('dn'); titleEl.innerText = "Setup"; subEl.innerText = "Details"; }
         updateAccessSummary('create');
     };
-
-    window.prevCreateStep = () => {
-        state.currentStep.create = 1;
-        updateStepUI('create');
-    };
-
-    window.nextEditStep = () => {
-        const name = $('edit-room-name').value.trim();
-        if (!name) return window.toast("Name required.");
-        state.currentStep.edit = 2;
-        updateStepUI('edit');
-        updateAccessSummary('edit');
-    };
-
-    window.prevEditStep = () => {
-        state.currentStep.edit = 1;
-        updateStepUI('edit');
-    };
+    window.prevCreateStep = () => { state.currentStep.create = 1; updateStepUI('create'); };
+    window.nextEditStep = () => { const name = $('edit-room-name').value.trim(); if (!name) return window.toast("Name required."); state.currentStep.edit = 2; updateStepUI('edit'); updateAccessSummary('edit'); };
+    window.prevEditStep = () => { state.currentStep.edit = 1; updateStepUI('edit'); };
 
     window.openAccessManager = async (prefix) => {
         state.currentPickerContext = prefix;
@@ -1211,113 +815,63 @@ export function initHRNchat(customConfig = {}) {
             const ids = state.currentRoomData.allowed_users;
             if (ids && !ids.includes('*')) {
                 const { data: profiles } = await db.from('profiles').select('id, full_name, avatar_url').in('id', ids);
-                state.selectedAllowedUsers = ids.map(id => {
-                    const p = profiles?.find(pro => pro.id === id);
-                    return { id: id, name: p?.full_name || 'Unknown', avatar: p?.avatar_url };
-                });
+                state.selectedAllowedUsers = ids.map(id => { const p = profiles?.find(pro => pro.id === id); return { id: id, name: p?.full_name || 'Unknown', avatar: p?.avatar_url }; });
             }
         }
-        renderPickerSelectedUsers();
-        window.showOverlayView('access-manager');
-        window.openOverlay();
-        state.ui.overlayCloseLocked = true;
-        $('picker-id-input').value = '';
-        $('picker-id-input').focus();
+        renderPickerSelectedUsers(); window.showOverlayView('access-manager'); window.openOverlay(); state.ui.overlayCloseLocked = true; $('picker-id-input').value = ''; $('picker-id-input').focus();
     };
-
-    window.closeAccessManager = () => {
-        state.ui.overlayCloseLocked = false;
-        if (state.currentPickerContext === 'edit-room') window.showOverlayView('room-settings');
-        else window.closeOverlay();
-        updateAccessSummary(state.currentPickerContext);
-    };
+    window.closeAccessManager = () => { state.ui.overlayCloseLocked = false; if (state.currentPickerContext === 'edit-room') window.showOverlayView('room-settings'); else window.closeOverlay(); updateAccessSummary(state.currentPickerContext); };
 
     const renderPickerSelectedUsers = () => {
-        const container = $('picker-selected-list');
-        const displayUsers = state.selectedAllowedUsers;
-        if (displayUsers.length === 0) {
-            container.innerHTML = `<div style="color:var(--text-mute);padding:20px 0;font-size:12px;text-align:center">No users selected.</div>`;
-            $('picker-count').innerText = '0';
-            return;
-        }
+        const container = $('picker-selected-list'); const displayUsers = state.selectedAllowedUsers;
+        if (displayUsers.length === 0) { container.innerHTML = `<div style="color:var(--text-mute);padding:20px 0;font-size:12px;text-align:center">No users selected.</div>`; $('picker-count').innerText = '0'; return; }
         $('picker-count').innerText = displayUsers.length;
         container.innerHTML = displayUsers.map(u => `<div class="picker-user-card" style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><div style="width:28px;height:28px;border-radius:50%;background:#f2f2f7;overflow:hidden;margin-right:8px;display:flex;align-items:center;justify-content:center;color:var(--accent);font-weight:800;font-size:11px">${u.avatar ? `<img src="${u.avatar}">` : u.name.charAt(0)}</div><div style="flex:1;min-width:0"><div style="font-weight:700;font-size:12px">${esc(u.name)} ${u.id === state.user.id ? '<span style="color:var(--text-mute);font-weight:500">(You)</span>' : ''}</div><div style="font-size:9px;color:var(--text-mute);font-family:monospace">${u.id}</div></div><button class="picker-remove-btn" style="background:transparent;border:none;color:var(--danger);cursor:pointer;padding:8px" onclick="window.removePickerUser('${u.id}')"><i data-lucide="x" style="width:14px;height:14px"></i></button></div>`).join('');
     };
 
-    window.removePickerUser = (id) => {
-        state.selectedAllowedUsers = state.selectedAllowedUsers.filter(u => u.id !== id);
-        renderPickerSelectedUsers();
-    };
-
+    window.removePickerUser = (id) => { state.selectedAllowedUsers = state.selectedAllowedUsers.filter(u => u.id !== id); renderPickerSelectedUsers(); };
     window.addUserById = async () => {
-        const input = $('picker-id-input');
-        const id = input.value.trim();
+        const input = $('picker-id-input'); const id = input.value.trim();
         if (!id) return window.toast("Enter an ID.");
         if (state.selectedAllowedUsers.find(u => u.id === id)) return window.toast("User already added.");
         window.setLoading(true, "Fetching...");
         const { data, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', id).single();
         window.setLoading(false);
         if (error || !data) return window.toast("User not found.");
-        await localDB.put('profiles', data);
-        state.profileCache[data.id] = data;
+        await localDB.put('profiles', data); state.profileCache[data.id] = data;
         state.selectedAllowedUsers.push({ id: data.id, name: data.full_name, avatar: data.avatar_url });
-        renderPickerSelectedUsers();
-        input.value = '';
-        window.toast("User added.");
+        renderPickerSelectedUsers(); input.value = ''; window.toast("User added.");
     };
 
     window.openOverlay = () => { const oc = $('overlay-container'); if (oc) { oc.classList.add('active'); state.ui.isOverlayOpen = true; } };
     window.closeOverlay = () => { const oc = $('overlay-container'); if (oc) { oc.classList.remove('active'); state.ui.isOverlayOpen = false; state.ui.overlayCloseLocked = false; } };
-    window.showOverlayView = (viewId) => {
-        const panel = document.querySelector('.panel-card');
-        if (!panel) return;
-        panel.querySelectorAll('.view-content').forEach(v => v.classList.remove('active'));
-        const target = $(`view-${viewId}`);
-        if (target) target.classList.add('active');
-    };
+    window.showOverlayView = (viewId) => { const panel = document.querySelector('.panel-card'); if (!panel) return; panel.querySelectorAll('.view-content').forEach(v => v.classList.remove('active')); const target = $(`view-${viewId}`); if (target) target.classList.add('active'); };
 
     window.prepareAccountPage = async () => {
         if (!state.user) return;
         const { data: profile } = await db.from('profiles').select('avatar_url, full_name').eq('id', state.user.id).single();
         const name = profile?.full_name || state.user.user_metadata?.full_name || "User";
         const avatar = profile?.avatar_url || state.user.user_metadata?.avatar_url;
-        $('acc-page-name').innerText = name;
-        $('acc-page-type').innerText = "Full Account";
-        $('acc-page-id').innerText = state.user.id;
-        const avPrev = $('acc-page-avatar');
-        if (avatar) avPrev.innerHTML = `<img src="${avatar}">`;
-        else avPrev.innerText = name.charAt(0);
-        $('acc-email-wrapper').style.display = 'block';
-        $('acc-page-email').innerText = state.user.email || "Not set";
+        $('acc-page-name').innerText = name; $('acc-page-type').innerText = "Full Account"; $('acc-page-id').innerText = state.user.id;
+        const avPrev = $('acc-page-avatar'); if (avatar) avPrev.innerHTML = `<img src="${avatar}">`; else avPrev.innerText = name.charAt(0);
+        $('acc-email-wrapper').style.display = 'block'; $('acc-page-email').innerText = state.user.email || "Not set";
     };
 
     window.copyAccountId = () => { if (!state.user) return; navigator.clipboard.writeText(state.user.id); window.toast("ID copied."); };
     window.copyInfoId = () => { if (!state.currentRoomId) return; navigator.clipboard.writeText(state.currentRoomId); window.toast("ID copied."); };
 
     const updateLobbyAvatar = async () => {
-        if (!state.user) return;
-        const btn = $('lobby-avatar-btn');
-        if (!btn) return;
-        let avatar = state.user.user_metadata?.avatar_url;
-        let name = state.user.user_metadata?.full_name;
-        if (!avatar || !name) {
-            const { data } = await db.from('profiles').select('avatar_url, full_name').eq('id', state.user.id).single();
-            if (data) { avatar = data.avatar_url; name = data.full_name; }
-        }
-        const profile = await getProfile(state.user.id);
-        if (profile && profile.avatar_url) avatar = profile.avatar_url;
-        if (avatar) btn.innerHTML = `<img src="${avatar}">`;
-        else btn.innerText = (name || "U").charAt(0);
+        if (!state.user) return; const btn = $('lobby-avatar-btn'); if (!btn) return;
+        let avatar = state.user.user_metadata?.avatar_url; let name = state.user.user_metadata?.full_name;
+        if (!avatar || !name) { const { data } = await db.from('profiles').select('avatar_url, full_name').eq('id', state.user.id).single(); if (data) { avatar = data.avatar_url; name = data.full_name; } }
+        const profile = await getProfile(state.user.id); if (profile && profile.avatar_url) avatar = profile.avatar_url;
+        if (avatar) btn.innerHTML = `<img src="${avatar}">`; else btn.innerText = (name || "U").charAt(0);
     };
 
     const getDateLabel = (d) => {
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-        const diff = Math.round((today - target) / 86400000);
-        if (diff === 0) return "Today";
-        if (diff === 1) return "Yesterday";
-        if (diff < 7) return d.toLocaleDateString('en-GB', { weekday: 'long' });
+        const now = new Date(); const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const target = new Date(d.getFullYear(), d.getMonth(), d.getDate()); const diff = Math.round((today - target) / 86400000);
+        if (diff === 0) return "Today"; if (diff === 1) return "Yesterday"; if (diff < 7) return d.toLocaleDateString('en-GB', { weekday: 'long' });
         return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
     };
 
@@ -1335,13 +889,9 @@ export function initHRNchat(customConfig = {}) {
         const isDeleted = m.deleted === true;
         const isEdited = m.updated_at && !isDeleted && new Date(m.updated_at).getTime() > new Date(m.created_at).getTime() + 1000;
         let html = "";
-        const msgDateObj = new Date(m.created_at);
-        const currentLabel = getDateLabel(msgDateObj);
+        const msgDateObj = new Date(m.created_at); const currentLabel = getDateLabel(msgDateObj);
         const isGroupStart = !prevMsg || prevMsg.user_id !== m.user_id || getDateLabel(new Date(prevMsg.created_at)) !== currentLabel;
-        if (isGroupStart && currentLabel !== state.lastRenderedDateLabel) {
-            html += `<div class="date-divider"><span class="date-label">${currentLabel}</span></div>`;
-            state.lastRenderedDateLabel = currentLabel;
-        }
+        if (isGroupStart && currentLabel !== state.lastRenderedDateLabel) { html += `<div class="date-divider"><span class="date-label">${currentLabel}</span></div>`; state.lastRenderedDateLabel = currentLabel; }
         const displayName = truncateText(m.user_name || 'User', 18);
         const msgClass = isOptimistic ? 'msg-optimistic' : (isGroupStart ? 'group-start' : 'msg-continuation');
         const sideClass = m.user_id === state.user?.id ? 'me' : 'not-me';
@@ -1358,21 +908,14 @@ export function initHRNchat(customConfig = {}) {
         return html;
     };
 
-    const handleScroll = () => {
-        const container = $('chat-messages');
-        if (!container) return;
-        if (container.scrollTop < 50 && !state.isLoadingHistory && state.hasMoreHistory) loadMoreHistory();
-    };
+    const handleScroll = () => { const container = $('chat-messages'); if (!container) return; if (container.scrollTop < 50 && !state.isLoadingHistory && state.hasMoreHistory) loadMoreHistory(); };
 
     const loadMoreHistory = async () => {
         if (!state.oldestMessageTimestamp || !state.currentRoomId) return;
-        state.isLoadingHistory = true;
-        const container = $('chat-messages');
-        const oldScrollHeight = container.scrollHeight;
+        state.isLoadingHistory = true; const container = $('chat-messages'); const oldScrollHeight = container.scrollHeight;
         container.insertAdjacentHTML('afterbegin', '<div id="history-loader" style="text-align:center;padding:10px;font-size:11px;color:var(--text-mute)">Loading...</div>');
         const { data, error } = await db.from('messages').select('*').eq('room_id', state.currentRoomId).lt('created_at', state.oldestMessageTimestamp).order('created_at', { ascending: false }).limit(CONFIG.historyLoadLimit);
-        const loader = $('history-loader');
-        if (loader) loader.remove();
+        const loader = $('history-loader'); if (loader) loader.remove();
         if (error || !data || data.length === 0) { state.hasMoreHistory = false; state.isLoadingHistory = false; return; }
         data.reverse();
         try {
@@ -1384,338 +927,146 @@ export function initHRNchat(customConfig = {}) {
                 validMsgs.forEach(m => { html += renderMsg(m, prev, state.currentRoomData?.is_direct); prev = m; });
                 container.insertAdjacentHTML('afterbegin', html);
                 container.scrollTop = container.scrollHeight - oldScrollHeight;
-                const messagesWithRoomId = validMsgs.map(m => ({ ...m, room_id: state.currentRoomId }));
-                await localDB.putAll('messages', messagesWithRoomId);
+                await localDB.putAll('messages', validMsgs.map(m => ({ ...m, room_id: state.currentRoomId })));
             }
         } catch (e) {}
         state.isLoadingHistory = false;
     };
 
     window.openRoomInfo = async () => {
-        if (!state.currentRoomData) return;
-        window.setLoading(true, "Loading info...");
-        const room = state.currentRoomData;
-        const delBtn = $('info-delete-btn');
-        const creatorRow = $('info-creator-row');
-        delBtn.style.display = 'none';
-        delBtn.innerText = "Delete Chat";
-        delBtn.classList.remove('active');
+        if (!state.currentRoomData) return; window.setLoading(true, "Loading info..."); const room = state.currentRoomData;
+        const delBtn = $('info-delete-btn'); const creatorRow = $('info-creator-row');
+        delBtn.style.display = 'none'; delBtn.innerText = "Delete Chat"; delBtn.classList.remove('active');
         if (state.deleteConfirmTimeout) clearTimeout(state.deleteConfirmTimeout);
         $('info-id').innerText = room.id;
-        const date = new Date(room.created_at);
-        $('info-date').innerText = `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
-        const display = await resolveRoomDisplay(room);
-        $('info-name').innerText = display.name;
-        const avEl = $('info-avatar');
-        if (display.avatar) avEl.innerHTML = `<img src="${display.avatar}">`;
-        else avEl.innerText = display.name.charAt(0);
-        if (room.is_direct) {
-            $('info-type').innerText = "Direct Message";
-            creatorRow.style.display = 'none';
-            delBtn.style.display = 'flex';
-        } else {
-            $('info-type').innerText = "Group Chat";
-            creatorRow.style.display = 'flex';
-            if (room.created_by) {
-                let profile = state.profileCache[room.created_by];
-                if (!profile) {
-                    const { data } = await db.from('profiles').select('full_name').eq('id', room.created_by).single();
-                    profile = data;
-                    if (data) state.profileCache[room.created_by] = data;
-                }
-                $('info-creator').innerText = profile?.full_name || 'Unknown';
-            } else $('info-creator').innerText = 'Unknown';
+        const date = new Date(room.created_at); $('info-date').innerText = `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+        const display = await resolveRoomDisplay(room); $('info-name').innerText = display.name;
+        const avEl = $('info-avatar'); if (display.avatar) avEl.innerHTML = `<img src="${display.avatar}">`; else avEl.innerText = display.name.charAt(0);
+        if (room.is_direct) { $('info-type').innerText = "Direct Message"; creatorRow.style.display = 'none'; delBtn.style.display = 'flex'; }
+        else {
+            $('info-type').innerText = "Group Chat"; creatorRow.style.display = 'flex';
+            if (room.created_by) { let profile = state.profileCache[room.created_by]; if (!profile) { const { data } = await db.from('profiles').select('full_name').eq('id', room.created_by).single(); profile = data; if (data) state.profileCache[room.created_by] = data; } $('info-creator').innerText = profile?.full_name || 'Unknown'; }
+            else $('info-creator').innerText = 'Unknown';
             if (room.created_by === state.user.id) delBtn.style.display = 'flex';
         }
-        updatePresenceUI();
-        window.setLoading(false);
-        window.showOverlayView('room-info');
-        window.openOverlay();
+        updatePresenceUI(); window.setLoading(false); window.showOverlayView('room-info'); window.openOverlay();
     };
 
-    window.initiateDeleteRoom = () => {
-        const btn = $('info-delete-btn');
-        if (btn.classList.contains('active')) window.deleteRoom();
-        else {
-            btn.classList.add('active');
-            btn.innerText = "Tap again to confirm";
-            state.deleteConfirmTimeout = setTimeout(() => { btn.classList.remove('active'); btn.innerText = "Delete Chat"; }, 3000);
-        }
-    };
+    window.initiateDeleteRoom = () => { const btn = $('info-delete-btn'); if (btn.classList.contains('active')) window.deleteRoom(); else { btn.classList.add('active'); btn.innerText = "Tap again to confirm"; state.deleteConfirmTimeout = setTimeout(() => { btn.classList.remove('active'); btn.innerText = "Delete Chat"; }, 3000); } };
 
     window.openRoomSettings = async () => {
-        window.closeOverlay();
-        if (!state.currentRoomId || !state.currentRoomData || state.currentRoomData.created_by !== state.user.id) return window.toast("Access denied.");
-        window.setLoading(true, "Loading...");
-        const room = state.currentRoomData;
-        state.currentStep.edit = 1;
-        updateStepUI('edit');
-        $('edit-room-name').value = room.name;
-        $('edit-room-visible').checked = room.is_visible;
-        $('edit-room-pass').value = '';
-        const passStatusLabel = $('pass-status-label');
-        const removePassBtn = $('btn-remove-pass');
+        window.closeOverlay(); if (!state.currentRoomId || !state.currentRoomData || state.currentRoomData.created_by !== state.user.id) return window.toast("Access denied.");
+        window.setLoading(true, "Loading..."); const room = state.currentRoomData;
+        state.currentStep.edit = 1; updateStepUI('edit');
+        $('edit-room-name').value = room.name; $('edit-room-visible').checked = room.is_visible; $('edit-room-pass').value = '';
+        const passStatusLabel = $('pass-status-label'); const removePassBtn = $('btn-remove-pass');
         if (room.has_password) { passStatusLabel.innerText = "Active"; passStatusLabel.style.color = "var(--success)"; removePassBtn.style.display = 'block'; }
         else { passStatusLabel.innerText = "Not Set"; passStatusLabel.style.color = "var(--text-mute)"; removePassBtn.style.display = 'none'; }
-        state.removePasswordFlag = false;
-        state.selectedAllowedUsers = [];
+        state.removePasswordFlag = false; state.selectedAllowedUsers = [];
         const ids = room.allowed_users;
         if (ids && !ids.includes('*')) {
             const { data: profiles } = await db.from('profiles').select('id, full_name, avatar_url').in('id', ids);
-            state.selectedAllowedUsers = ids.map(id => {
-                const p = profiles?.find(pro => pro.id === id);
-                return { id: id, name: p?.full_name || 'Unknown', avatar: p?.avatar_url };
-            });
+            state.selectedAllowedUsers = ids.map(id => { const p = profiles?.find(pro => pro.id === id); return { id: id, name: p?.full_name || 'Unknown', avatar: p?.avatar_url }; });
         }
-        window.showOverlayView('room-settings');
-        window.openOverlay();
-        window.setLoading(false);
+        window.showOverlayView('room-settings'); window.openOverlay(); window.setLoading(false);
     };
 
-    window.prepareRemovePassword = () => {
-        state.removePasswordFlag = true;
-        $('pass-status-label').innerText = "Will be removed";
-        $('pass-status-label').style.color = "var(--danger)";
-        $('edit-room-pass').value = '';
-        $('edit-room-pass').disabled = true;
-    };
+    window.prepareRemovePassword = () => { state.removePasswordFlag = true; $('pass-status-label').innerText = "Will be removed"; $('pass-status-label').style.color = "var(--danger)"; $('edit-room-pass').value = ''; $('edit-room-pass').disabled = true; };
 
     window.saveRoomSettings = async (e) => {
-        if (!e || !e.isTrusted) return;
-        if (state.processingAction) return;
-        state.processingAction = true;
-        const name = $('edit-room-name').value.trim();
-        const isVisible = $('edit-room-visible').checked;
-        const newPass = $('edit-room-pass').value;
+        if (!e || !e.isTrusted) return; if (state.processingAction) return; state.processingAction = true;
+        const name = $('edit-room-name').value.trim(); const isVisible = $('edit-room-visible').checked; const newPass = $('edit-room-pass').value;
         let allowedUsers = state.selectedAllowedUsers.length > 0 ? state.selectedAllowedUsers.map(u => u.id) : ['*'];
         if (!allowedUsers.includes(state.user.id)) allowedUsers.push(state.user.id);
         if (!name) { window.toast("Name required."); state.processingAction = false; return; }
-        const room = state.currentRoomData;
-        const isChangingPass = newPass.length > 0;
-        const isRemovingPass = state.removePasswordFlag;
-        window.setLoading(true, "Saving...");
-        const updates = { name, is_visible: isVisible, allowed_users: allowedUsers };
-        if (isRemovingPass) updates.has_password = false;
-        else if (isChangingPass) updates.has_password = true;
+        const room = state.currentRoomData; const isChangingPass = newPass.length > 0; const isRemovingPass = state.removePasswordFlag;
+        window.setLoading(true, "Saving..."); const updates = { name, is_visible: isVisible, allowed_users: allowedUsers };
+        if (isRemovingPass) updates.has_password = false; else if (isChangingPass) updates.has_password = true;
         const { error: updateError } = await db.from('rooms').update(updates).eq('id', state.currentRoomId);
         if (updateError) { window.toast("Save failed."); window.setLoading(false); state.processingAction = false; return; }
-        if (isRemovingPass) {
-            await db.rpc('set_room_password', { p_room_id: state.currentRoomId, p_hash: null });
-            state.currentRoomData.has_password = false;
-        } else if (isChangingPass) {
-            const roomSalt = state.currentRoomData.salt;
-            const accessHash = await sha256(newPass + roomSalt);
-            await db.rpc('set_room_password', { p_room_id: state.currentRoomId, p_hash: accessHash });
-            state.currentRoomData.has_password = true;
-        }
+        if (isRemovingPass) { await db.rpc('set_room_password', { p_room_id: state.currentRoomId, p_hash: null }); state.currentRoomData.has_password = false; }
+        else if (isChangingPass) { const roomSalt = state.currentRoomData.salt; const accessHash = await sha256(newPass + roomSalt); await db.rpc('set_room_password', { p_room_id: state.currentRoomId, p_hash: accessHash }); state.currentRoomData.has_password = true; }
         const { data: updatedRoom } = await db.from('rooms').select('*').eq('id', state.currentRoomId).single();
-        state.currentRoomData = updatedRoom;
-        state.currentRoomDisplay = await resolveRoomDisplay(updatedRoom);
-        $('chat-title').innerText = state.currentRoomDisplay.name;
-        window.toast("Saved.");
-        window.closeOverlay();
-        state.processingAction = false;
-        window.setLoading(false);
+        state.currentRoomData = updatedRoom; state.currentRoomDisplay = await resolveRoomDisplay(updatedRoom); $('chat-title').innerText = state.currentRoomDisplay.name;
+        window.toast("Saved."); window.closeOverlay(); state.processingAction = false; window.setLoading(false);
     };
 
-    window.deleteRoom = async () => {
-        if (!state.currentRoomId) return;
-        window.setLoading(true, "Deleting...");
-        const { error } = await db.from('rooms').delete().eq('id', state.currentRoomId);
-        if (error) { window.toast("Delete failed."); window.setLoading(false); return; }
-        window.toast("Deleted.");
-        state.currentRoomId = null;
-        state.currentRoomData = null;
-        window.closeOverlay();
-        window.nav('scr-lobby');
-        window.loadRooms();
-        window.setLoading(false);
-    };
+    window.deleteRoom = async () => { if (!state.currentRoomId) return; window.setLoading(true, "Deleting..."); const { error } = await db.from('rooms').delete().eq('id', state.currentRoomId); if (error) { window.toast("Delete failed."); window.setLoading(false); return; } window.toast("Deleted."); state.currentRoomId = null; state.currentRoomData = null; window.closeOverlay(); window.nav('scr-lobby'); window.loadRooms(); window.setLoading(false); };
 
     window.openVault = async (id, n, rawPassword, roomSalt, cachedData = null) => {
-        if (!state.user) return window.toast("Please log in.");
-        if (state.isCapacityBlocked) return;
-        window.setLoading(true, "Opening chat...");
-        state.currentRoomPassword = rawPassword;
-        
-        await cleanupChannels(true); 
-
-        state.currentRoomId = id;
-        state.lastRenderedDateLabel = null;
-        state.oldestMessageTimestamp = null;
-        state.hasMoreHistory = true;
-        state.isLoadingHistory = false;
-        const chatContainer = $('chat-messages');
-        chatContainer.innerHTML = '';
-        chatContainer.onscroll = handleScroll;
+        if (!state.user) return window.toast("Please log in."); if (state.isCapacityBlocked) return;
+        window.setLoading(true, "Opening chat..."); state.currentRoomPassword = rawPassword;
+        await cleanupChannels(true);
+        state.currentRoomId = id; state.lastRenderedDateLabel = null; state.oldestMessageTimestamp = null; state.hasMoreHistory = true; state.isLoadingHistory = false;
+        const chatContainer = $('chat-messages'); chatContainer.innerHTML = ''; chatContainer.onscroll = handleScroll;
         let roomData = null;
         if (state.isOfflineMode) {
             roomData = await localDB.get('rooms', id);
             if (!roomData) { window.setLoading(false); return window.toast("Chat not found locally."); }
-            state.currentRoomData = roomData;
-            const isDirect = roomData?.is_direct;
-            state.currentRoomDisplay = await resolveRoomDisplay(roomData);
-            $('chat-title').innerText = state.currentRoomDisplay.name;
-            const avEl = $('chat-avatar-display');
-            if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`;
-            else avEl.innerText = state.currentRoomDisplay.name.charAt(0).toUpperCase();
-            const editBtn = $('info-edit-btn');
-            if (!isDirect && roomData?.created_by === state.user.id) editBtn.style.display = 'flex';
-            else editBtn.style.display = 'none';
-            const keySource = rawPassword ? (rawPassword + id) : id;
-            await deriveKey(keySource, roomData?.salt, id);
-            let localMessages = await localDB.getRoomMessages(id);
-            let renderedHtml = '';
-            if (localMessages.length > 0) {
-                let prev = null;
-                localMessages.forEach(m => { renderedHtml += renderMsg(m, prev, isDirect); prev = m; });
-                chatContainer.innerHTML = renderedHtml;
-                chatContainer.scrollTop = chatContainer.scrollHeight;
-            }
-            checkChatEmpty();
-            $('chat-input').style.display = 'block';
-            $('send-btn').style.display = 'flex';
-            setConnectionVisuals('offline');
-            window.nav('scr-chat');
-            window.setLoading(false);
-            return;
+            state.currentRoomData = roomData; const isDirect = roomData?.is_direct;
+            state.currentRoomDisplay = await resolveRoomDisplay(roomData); $('chat-title').innerText = state.currentRoomDisplay.name;
+            const avEl = $('chat-avatar-display'); if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`; else avEl.innerText = state.currentRoomDisplay.name.charAt(0).toUpperCase();
+            const editBtn = $('info-edit-btn'); if (!isDirect && roomData?.created_by === state.user.id) editBtn.style.display = 'flex'; else editBtn.style.display = 'none';
+            const keySource = rawPassword ? (rawPassword + id) : id; await deriveKey(keySource, roomData?.salt, id);
+            let localMessages = await localDB.getRoomMessages(id); let renderedHtml = '';
+            if (localMessages.length > 0) { let prev = null; localMessages.forEach(m => { renderedHtml += renderMsg(m, prev, isDirect); prev = m; }); chatContainer.innerHTML = renderedHtml; chatContainer.scrollTop = chatContainer.scrollHeight; }
+            checkChatEmpty(); $('chat-input').style.display = 'block'; $('send-btn').style.display = 'flex'; setConnectionVisuals('offline'); window.nav('scr-chat'); window.setLoading(false); return;
         }
         if (cachedData) { roomData = cachedData; }
-        else {
-            try {
-                const { data: netRoom } = await execQuery(db.from('rooms').select('*').eq('id', id).single());
-                if (netRoom && netRoom.id) { roomData = netRoom; await localDB.put('rooms', roomData); }
-            } catch (e) {}
-        }
+        else { try { const { data: netRoom } = await execQuery(db.from('rooms').select('*').eq('id', id).single()); if (netRoom && netRoom.id) { roomData = netRoom; await localDB.put('rooms', roomData); } } catch (e) {} }
         if (!roomData) { window.setLoading(false); return window.toast("Chat not found."); }
-        state.currentRoomData = roomData;
-        const isDirect = roomData?.is_direct;
-        state.currentRoomDisplay = await resolveRoomDisplay(roomData);
-        $('chat-title').innerText = state.currentRoomDisplay.name;
-        const avEl = $('chat-avatar-display');
-        if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`;
-        else avEl.innerText = state.currentRoomDisplay.name.charAt(0).toUpperCase();
-        const editBtn = $('info-edit-btn');
-        if (!isDirect && roomData.created_by === state.user.id) editBtn.style.display = 'flex';
-        else editBtn.style.display = 'none';
-        const keySource = rawPassword ? (rawPassword + id) : id;
-        await deriveKey(keySource, roomData?.salt, id);
+        state.currentRoomData = roomData; const isDirect = roomData?.is_direct;
+        state.currentRoomDisplay = await resolveRoomDisplay(roomData); $('chat-title').innerText = state.currentRoomDisplay.name;
+        const avEl = $('chat-avatar-display'); if (state.currentRoomDisplay.avatar) avEl.innerHTML = `<img src="${state.currentRoomDisplay.avatar}">`; else avEl.innerText = state.currentRoomDisplay.name.charAt(0).toUpperCase();
+        const editBtn = $('info-edit-btn'); if (!isDirect && roomData.created_by === state.user.id) editBtn.style.display = 'flex'; else editBtn.style.display = 'none';
+        const keySource = rawPassword ? (rawPassword + id) : id; await deriveKey(keySource, roomData?.salt, id);
         let finalMessages = [];
         try {
             const { data } = await execQuery(db.from('messages').select('*').eq('room_id', id).order('created_at', { ascending: false }).limit(CONFIG.maxMessages));
             if (data && data.length > 0) {
-                data.reverse();
-                const res = await workerExec('decryptHistory', { messages: data, keyId: id });
-                const validMsgs = res.results.filter(m => !m.error);
-                await localDB.clearRoomMessages(id);
-                const messagesWithRoomId = validMsgs.map(m => ({ ...m, room_id: id }));
-                await localDB.putAll('messages', messagesWithRoomId);
-                finalMessages = validMsgs;
+                data.reverse(); const res = await workerExec('decryptHistory', { messages: data, keyId: id }); const validMsgs = res.results.filter(m => !m.error);
+                await localDB.clearRoomMessages(id); const messagesWithRoomId = validMsgs.map(m => ({ ...m, room_id: id })); await localDB.putAll('messages', messagesWithRoomId); finalMessages = validMsgs;
             } else { await localDB.clearRoomMessages(id); }
         } catch (e) { console.error("Fetch error", e); }
         window.nav('scr-chat');
-        if (finalMessages.length > 0) {
-            state.oldestMessageTimestamp = finalMessages[0].created_at;
-            let html = '', prev = null;
-            finalMessages.forEach(m => { html += renderMsg(m, prev, isDirect); prev = m; });
-            chatContainer.innerHTML = html;
-        }
-        checkChatEmpty();
-        $('chat-input').style.display = 'block';
-        $('send-btn').style.display = 'flex';
-        setConnectionVisuals('connecting');
-        await initRoomPresence(id);
-        await setupChatChannel(id);
+        if (finalMessages.length > 0) { state.oldestMessageTimestamp = finalMessages[0].created_at; let html = '', prev = null; finalMessages.forEach(m => { html += renderMsg(m, prev, isDirect); prev = m; }); chatContainer.innerHTML = html; }
+        checkChatEmpty(); $('chat-input').style.display = 'block'; $('send-btn').style.display = 'flex'; setConnectionVisuals('connecting');
+        await initRoomPresence(id); await setupChatChannel(id);
         setTimeout(() => { chatContainer.scrollTop = chatContainer.scrollHeight; window.setLoading(false); }, 100);
     };
 
-    const applyRateLimit = () => {
-        const now = Date.now();
-        if (now - state.lastMessageTime < CONFIG.rateLimitMs) return false;
-        return true;
-    };
+    const applyRateLimit = () => { const now = Date.now(); if (now - state.lastMessageTime < CONFIG.rateLimitMs) return false; return true; };
 
     window.sendMsg = async (e) => {
-        if (!e || !e.isTrusted) return;
-        if (!state.user || !state.currentRoomId || state.processingAction) return;
-        if (state.isOfflineMode) return window.toast("Offline mode.");
-        if (!state.isChatChannelReady) return;
-        if (state.isCapacityBlocked) return window.toast("Server full.");
-        if (!applyRateLimit()) return;
-        const v = $('chat-input').value.trim();
-        if (!v) return;
-        if (v.length > CONFIG.maxMessageLength) return window.toast(`Message too long (max ${CONFIG.maxMessageLength} chars).`);
-        state.processingAction = true;
-        $('chat-input').value = '';
-        state.lastMessageTime = Date.now();
-        try {
-            const enc = await encryptMessage(v, state.currentRoomId);
-            const { data, error } = await db.from('messages').insert([{ room_id: state.currentRoomId, user_id: state.user.id, user_name: state.user.user_metadata?.full_name, content: enc }]).select().single();
-            if (error) window.toast("Failed to send.");
-        } catch (err) { window.toast("Send failed."); }
+        if (!e || !e.isTrusted) return; if (!state.user || !state.currentRoomId || state.processingAction) return;
+        if (state.isOfflineMode) return window.toast("Offline mode."); if (!state.isChatChannelReady) return; if (state.isCapacityBlocked) return window.toast("Server full."); if (!applyRateLimit()) return;
+        const v = $('chat-input').value.trim(); if (!v) return; if (v.length > CONFIG.maxMessageLength) return window.toast(`Message too long (max ${CONFIG.maxMessageLength} chars).`);
+        state.processingAction = true; $('chat-input').value = ''; state.lastMessageTime = Date.now();
+        try { const enc = await encryptMessage(v, state.currentRoomId); const { data, error } = await db.from('messages').insert([{ room_id: state.currentRoomId, user_id: state.user.id, user_name: state.user.user_metadata?.full_name, content: enc }]).select().single(); if (error) window.toast("Failed to send."); } catch (err) { window.toast("Send failed."); }
         state.processingAction = false;
     };
 
-    window.leaveChat = async () => {
-        window.setLoading(true, "Leaving...");
-        state.currentRoomId = null;
-        state.currentRoomData = null;
-        await cleanupChannels(true); 
-        setConnectionVisuals('offline');
-        if ($('info-edit-btn')) $('info-edit-btn').style.display = 'none';
-        window.nav('scr-lobby');
-        window.loadRooms();
-        window.setLoading(false);
-    };
+    window.leaveChat = async () => { window.setLoading(true, "Leaving..."); state.currentRoomId = null; state.currentRoomData = null; await cleanupChannels(true); setConnectionVisuals('offline'); if ($('info-edit-btn')) $('info-edit-btn').style.display = 'none'; window.nav('scr-lobby'); window.loadRooms(); window.setLoading(false); };
 
     window.handleLogin = async (e) => {
-        if (!e || !e.isTrusted) return;
-        if (state.processingAction) return;
-        state.processingAction = true;
-        const em = $('l-email').value, p = $('l-pass').value;
-        if (!em || !p) { window.toast("Missing fields."); state.processingAction = false; return; }
+        if (!e || !e.isTrusted) return; if (state.processingAction) return; state.processingAction = true;
+        const em = $('l-email').value, p = $('l-pass').value; if (!em || !p) { window.toast("Missing fields."); state.processingAction = false; return; }
         window.setLoading(true, "Signing In...");
         if (!navigator.onLine) {
             const knownUser = await localDB.get('known_users', em);
-            if (knownUser && knownUser.metadata) {
-                const hashInput = await sha256(p + em);
-                if (knownUser.pass_hash && knownUser.pass_hash === hashInput) {
-                    state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata };
-                    setAppMode(true);
-                    window.nav('scr-lobby');
-                    window.loadRooms();
-                    window.setLoading(false);
-                    state.processingAction = false;
-                    window.toast("Offline login successful.");
-                    return;
-                }
-            }
-            window.toast("No internet and no offline account found.");
-            window.setLoading(false);
-            state.processingAction = false;
-            return;
+            if (knownUser && knownUser.metadata) { const hashInput = await sha256(p + em); if (knownUser.pass_hash && knownUser.pass_hash === hashInput) { state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata }; setAppMode(true); window.nav('scr-lobby'); window.loadRooms(); window.setLoading(false); state.processingAction = false; window.toast("Offline login successful."); return; } }
+            window.toast("No internet and no offline account found."); window.setLoading(false); state.processingAction = false; return;
         }
         const success = await attemptLogin(em, p);
-        if (success) {
-            localStorage.setItem('hrn_auth_email', em);
-            localStorage.setItem('hrn_auth_pass', p);
-            setAppMode(false);
-            if (state.user) setupGlobalPresence(state.user.id);
-            window.nav('scr-lobby');
-            window.loadRooms();
-            window.toast("Connected.");
-        } else { window.toast("Invalid credentials or connection error."); }
-        window.setLoading(false);
-        state.processingAction = false;
+        if (success) { localStorage.setItem('hrn_auth_email', em); localStorage.setItem('hrn_auth_pass', p); setAppMode(false); if (state.user) setupGlobalPresence(state.user.id); window.nav('scr-lobby'); window.loadRooms(); window.toast("Connected."); }
+        else { window.toast("Invalid credentials or connection error."); }
+        window.setLoading(false); state.processingAction = false;
     };
 
     window.handleRegister = async (e) => {
-        if (!e || !e.isTrusted) return;
-        if (state.processingAction) return;
-        state.processingAction = true;
+        if (!e || !e.isTrusted) return; if (state.processingAction) return; state.processingAction = true;
         const n = $('r-name').value, em = $('r-email').value.trim().toLowerCase(), p = $('r-pass').value;
-        const customAvatar = $('r-avatar-url').value.trim();
-        const avatarUrl = customAvatar || state.selectedAvatar;
+        const customAvatar = $('r-avatar-url').value.trim(); const avatarUrl = customAvatar || state.selectedAvatar;
         if (!n || !em || p.length < 8) { window.toast("Invalid input."); state.processingAction = false; return; }
         if (!navigator.onLine) { window.toast("Internet connection required to register."); state.processingAction = false; return; }
         window.setLoading(true, "Sending Code...");
@@ -1725,31 +1076,17 @@ export function initHRNchat(customConfig = {}) {
             if (r) {
                 if (r.status === 429) { window.toast("Too many attempts."); state.processingAction = false; window.setLoading(false); return; }
                 const j = await r.json();
-                if (j.message === "Code sent") {
-                    sessionStorage.setItem('temp_reg', JSON.stringify({ n, em, p, avatar: avatarUrl }));
-                    window.nav('scr-verify');
-                    startVTimer();
-                    window.setLoading(false);
-                } else { window.toast("Could not send code."); window.setLoading(false); }
+                if (j.message === "Code sent") { sessionStorage.setItem('temp_reg', JSON.stringify({ n, em, p, avatar: avatarUrl })); window.nav('scr-verify'); startVTimer(); window.setLoading(false); }
+                else { window.toast("Could not send code."); window.setLoading(false); }
             }
         } catch (err) { window.toast("Network error."); window.setLoading(false); }
         state.processingAction = false;
     };
 
-    const startVTimer = () => {
-        let left = CONFIG.verificationCodeExpiry;
-        if (state.vTimer) clearInterval(state.vTimer);
-        state.vTimer = setInterval(() => {
-            left--;
-            $('v-timer').innerText = `${Math.floor(left/60)}:${(left%60).toString().padStart(2,'0')}`;
-            if (left <= 0) { clearInterval(state.vTimer); window.nav('scr-register'); }
-        }, 1000);
-    };
+    const startVTimer = () => { let left = CONFIG.verificationCodeExpiry; if (state.vTimer) clearInterval(state.vTimer); state.vTimer = setInterval(() => { left--; $('v-timer').innerText = `${Math.floor(left/60)}:${(left%60).toString().padStart(2,'0')}`; if (left <= 0) { clearInterval(state.vTimer); window.nav('scr-register'); } }, 1000); };
 
     window.handleVerify = async (e) => {
-        if (!e || !e.isTrusted) return;
-        if (state.processingAction) return;
-        state.processingAction = true;
+        if (!e || !e.isTrusted) return; if (state.processingAction) return; state.processingAction = true;
         const code = $('v-code').value, temp = JSON.parse(sessionStorage.getItem('temp_reg'));
         if (!temp) { window.toast("Session expired."); state.processingAction = false; return; }
         window.setLoading(true, "Verifying...");
@@ -1757,8 +1094,7 @@ export function initHRNchat(customConfig = {}) {
             const r = await fetch(CONFIG.mailApi, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "verify", email: temp.em, code: code }) });
             if (r.status === 429) { window.toast("Too many attempts."); state.processingAction = false; window.setLoading(false); return; }
             const j = await r.json();
-            if (j.message === "Verified") await finishReg(temp);
-            else { window.toast("Invalid code."); window.setLoading(false); }
+            if (j.message === "Verified") await finishReg(temp); else { window.toast("Invalid code."); window.setLoading(false); }
         } catch (err) { window.toast("Verification failed."); window.setLoading(false); }
         state.processingAction = false;
     };
@@ -1766,98 +1102,53 @@ export function initHRNchat(customConfig = {}) {
     const finishReg = async (temp) => {
         const { error } = await db.auth.signUp({ email: temp.em, password: temp.p, options: { data: { full_name: temp.n, avatar_url: temp.avatar } } });
         if (error) { window.toast("Registration failed."); window.setLoading(false); }
-        else {
-            localStorage.setItem('hrn_auth_email', temp.em);
-            localStorage.setItem('hrn_auth_pass', temp.p);
-            window.nav('scr-lobby');
-            window.loadRooms();
-            window.setLoading(false);
-        }
+        else { localStorage.setItem('hrn_auth_email', temp.em); localStorage.setItem('hrn_auth_pass', temp.p); window.nav('scr-lobby'); window.loadRooms(); window.setLoading(false); }
     };
 
     window.handleCreate = async (e) => {
-        if (!e || !e.isTrusted) return;
-        if (state.processingAction) return;
-        state.processingAction = true;
+        if (!e || !e.isTrusted) return; if (state.processingAction) return; state.processingAction = true;
         const isDirect = state.createType === 'direct';
-        let n, isVisible = true, targetUser = null;
-        let avatarUrl = null;
-        let rawPass = null;
+        let n, isVisible = true, targetUser = null; let avatarUrl = null; let rawPass = null;
         if (isDirect) {
-            targetUser = $('c-target-user').value.trim();
-            if (!targetUser) { window.toast("User ID required."); state.processingAction = false; return; }
+            targetUser = $('c-target-user').value.trim(); if (!targetUser) { window.toast("User ID required."); state.processingAction = false; return; }
             const { data: profile, error } = await db.from('profiles').select('id, full_name, avatar_url, updated_at').eq('id', targetUser).single();
             if (error || !profile) { window.toast("User not found."); state.processingAction = false; return; }
-            await localDB.put('profiles', profile);
-            state.profileCache[profile.id] = profile;
-            n = "Direct Message";
-            isVisible = true;
+            await localDB.put('profiles', profile); state.profileCache[profile.id] = profile; n = "Direct Message"; isVisible = true;
         } else {
-            n = $('c-name').value.trim();
-            const inputUrl = $('c-avatar').value.trim();
-            if (inputUrl) {
-                avatarUrl = inputUrl;
-            } else avatarUrl = null;
-            rawPass = $('c-pass').value;
-            isVisible = $('c-visible').checked;
-            if (!n) { window.toast("Name required."); state.processingAction = false; window.setLoading(false); return; }
+            n = $('c-name').value.trim(); const inputUrl = $('c-avatar').value.trim(); if (inputUrl) avatarUrl = inputUrl; else avatarUrl = null;
+            rawPass = $('c-pass').value; isVisible = $('c-visible').checked; if (!n) { window.toast("Name required."); state.processingAction = false; window.setLoading(false); return; }
         }
         let allowedUsers = ['*'];
         if (isDirect) allowedUsers = [state.user.id, targetUser];
-        else {
-            if (state.selectedAllowedUsers.length > 0) {
-                allowedUsers = state.selectedAllowedUsers.map(u => u.id);
-                if (!allowedUsers.includes(state.user.id)) allowedUsers.push(state.user.id);
-            }
-        }
-        window.setLoading(true, "Creating...");
-        const roomSalt = generateSalt();
+        else { if (state.selectedAllowedUsers.length > 0) { allowedUsers = state.selectedAllowedUsers.map(u => u.id); if (!allowedUsers.includes(state.user.id)) allowedUsers.push(state.user.id); } }
+        window.setLoading(true, "Creating..."); const roomSalt = generateSalt();
         const insertData = { name: n, avatar_url: avatarUrl, has_password: !!rawPass, is_visible: isVisible, salt: roomSalt, created_by: state.user.id, allowed_users: allowedUsers, is_direct: isDirect };
         const { data, error } = await db.from('rooms').insert([insertData]).select();
         if (error) { window.toast("Creation failed."); state.processingAction = false; window.setLoading(false); return; }
         if (data && data.length > 0) {
             const newRoom = data[0];
-            if (rawPass) {
-                const accessHash = await sha256(rawPass + roomSalt);
-                await db.rpc('set_room_password', { p_room_id: newRoom.id, p_hash: accessHash });
-            }
-            await localDB.put('rooms', newRoom);
-            state.lastCreated = newRoom;
-            state.lastCreatedPass = rawPass;
-            $('s-id').innerText = newRoom.id;
-            window.nav('scr-success');
-            state.selectedAllowedUsers = [];
+            if (rawPass) { const accessHash = await sha256(rawPass + roomSalt); await db.rpc('set_room_password', { p_room_id: newRoom.id, p_hash: accessHash }); }
+            await localDB.put('rooms', newRoom); state.lastCreated = newRoom; state.lastCreatedPass = rawPass;
+            $('s-id').innerText = newRoom.id; window.nav('scr-success'); state.selectedAllowedUsers = [];
         }
-        state.processingAction = false;
-        window.setLoading(false);
+        state.processingAction = false; window.setLoading(false);
     };
 
     window.submitGate = async (e) => {
-        if (!e || !e.isTrusted) return;
-        const inputPass = $('gate-pass').value;
+        if (!e || !e.isTrusted) return; const inputPass = $('gate-pass').value;
         if (state.isOfflineMode) { window.openVault(state.pending.id, state.pending.name, inputPass, state.pending.salt, state.pending); return; }
-        const inputHash = await sha256(inputPass + state.pending.salt);
-        window.setLoading(true, "Verifying...");
-        const { data } = await db.rpc('verify_room_password', { p_room_id: state.pending.id, p_hash: inputHash });
-        window.setLoading(false);
-        if (data === true) window.openVault(state.pending.id, state.pending.name, inputPass, state.pending.salt, state.pending);
-        else window.toast("Incorrect password.");
+        const inputHash = await sha256(inputPass + state.pending.salt); window.setLoading(true, "Verifying...");
+        const { data } = await db.rpc('verify_room_password', { p_room_id: state.pending.id, p_hash: inputHash }); window.setLoading(false);
+        if (data === true) window.openVault(state.pending.id, state.pending.name, inputPass, state.pending.salt, state.pending); else window.toast("Incorrect password.");
     };
 
     window.handleLogout = async (e) => {
-        if (!e || !e.isTrusted) return;
-        window.setLoading(true, "Leaving...");
-        state.currentRoomId = null;
-        state.user = null;
-        await fullDisconnect(); 
-        localStorage.removeItem('hrn_auth_email');
-        localStorage.removeItem('hrn_auth_pass');
-        setAppMode(false);
-        state.isCapacityBlocked = false;
-        await db.auth.signOut();
+        if (!e || !e.isTrusted) return; window.setLoading(true, "Leaving...");
+        state.currentRoomId = null; state.user = null; await fullDisconnect();
+        localStorage.removeItem('hrn_auth_email'); localStorage.removeItem('hrn_auth_pass');
+        setAppMode(false); state.isCapacityBlocked = false; await db.auth.signOut();
         if (state.authListener) { state.authListener.unsubscribe(); state.authListener = null; }
-        window.nav('scr-start');
-        window.setLoading(false);
+        window.nav('scr-start'); window.setLoading(false);
     };
 
     window.copySId = () => { if (!state.lastCreated) return; navigator.clipboard.writeText(state.lastCreated.id); window.toast("ID copied."); };
@@ -1865,46 +1156,20 @@ export function initHRNchat(customConfig = {}) {
     window.enterCreated = () => { if (!state.lastCreated) return; window.openVault(state.lastCreated.id, state.lastCreated.name, state.lastCreatedPass, state.lastCreated.salt, state.lastCreated); state.lastCreatedPass = null; };
 
     const { data: { subscription } } = db.auth.onAuthStateChange(async (ev, ses) => {
-        if (state.isOfflineMode && !ses) return;
-        state.user = ses?.user;
+        if (state.isOfflineMode && !ses) return; state.user = ses?.user;
         if (state.user && !state.isOfflineMode) setupGlobalPresence(state.user.id);
-        const createBtn = $('icon-plus-lobby');
-        if (createBtn) createBtn.style.display = 'flex';
-        if (ev === 'SIGNED_OUT') {
-            await fullDisconnect();
-            window.nav('scr-start');
-        }
+        const createBtn = $('icon-plus-lobby'); if (createBtn) createBtn.style.display = 'flex';
+        if (ev === 'SIGNED_OUT') { await fullDisconnect(); window.nav('scr-start'); }
     });
     state.authListener = subscription;
 
     window.nav = (id, direction = null) => {
-        if (state.isNavigating) return;
-        state.isNavigating = true;
+        if (state.isNavigating) return; state.isNavigating = true;
         requestAnimationFrame(() => {
-            const current = document.querySelector('.screen.active');
-            const next = $(id);
+            const current = document.querySelector('.screen.active'); const next = $(id);
             if (!next) { state.isNavigating = false; return; }
-            if (id === 'scr-create') {
-                state.currentStep.create = 1;
-                state.selectedAllowedUsers = [];
-                state.createType = 'group';
-                updateStepUI('create');
-                $('c-name').value = '';
-                $('c-target-user').value = '';
-                $('c-pass').value = '';
-                $('c-avatar').value = '';
-                document.querySelectorAll('.type-card').forEach(el => el.classList.remove('selected'));
-                $('type-group').classList.add('selected');
-            }
-            if (id === 'scr-register') {
-                state.currentStep.reg = 1;
-                state.selectedAvatar = null;
-                $('r-name').value = '';
-                $('r-email').value = '';
-                $('r-pass').value = '';
-                $('r-avatar-url').value = '';
-                updateStepUI('reg');
-            }
+            if (id === 'scr-create') { state.currentStep.create = 1; state.selectedAllowedUsers = []; state.createType = 'group'; updateStepUI('create'); $('c-name').value = ''; $('c-target-user').value = ''; $('c-pass').value = ''; $('c-avatar').value = ''; document.querySelectorAll('.type-card').forEach(el => el.classList.remove('selected')); $('type-group').classList.add('selected'); }
+            if (id === 'scr-register') { state.currentStep.reg = 1; state.selectedAvatar = null; $('r-name').value = ''; $('r-email').value = ''; $('r-pass').value = ''; $('r-avatar-url').value = ''; updateStepUI('reg'); }
             if (id === 'scr-account') window.prepareAccountPage();
             document.querySelectorAll('.screen').forEach(s => s.classList.remove('slide-left', 'slide-right'));
             if (direction === 'left') { if (current) current.classList.add('slide-left'); next.classList.remove('slide-right'); }
@@ -1912,8 +1177,7 @@ export function initHRNchat(customConfig = {}) {
             else document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
             document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
             next.classList.add('active');
-            const createBtn = $('icon-plus-lobby');
-            if (createBtn) createBtn.style.display = 'flex';
+            const createBtn = $('icon-plus-lobby'); if (createBtn) createBtn.style.display = 'flex';
             if (id === 'scr-lobby') updateLobbyAvatar();
             setTimeout(() => { state.isNavigating = false; }, 400);
         });
@@ -1922,170 +1186,63 @@ export function initHRNchat(customConfig = {}) {
     window.refreshLobby = async () => { const now = Date.now(); if (now - state.lastLobbyRefresh < 10000) return window.toast("Please wait."); state.lastLobbyRefresh = now; await window.loadRooms(); };
 
     window.loadRooms = async () => {
-        if (!state.user) return;
-        const uid = state.user.id;
-        const processAndRender = async (rooms) => {
-            const processed = [];
-            for (const r of rooms) {
-                if (!r || !r.id) continue;
-                const display = await resolveRoomDisplay(r);
-                processed.push({ ...r, display_name: display.name, display_avatar: display.avatar });
-            }
-            state.allRooms = processed;
-            window.filterRooms();
-        };
-        if (state.isOfflineMode) {
-            const localRooms = await localDB.getAll('rooms');
-            await processAndRender(localRooms);
-            updateLobbyAvatar();
-            return;
-        }
+        if (!state.user) return; const uid = state.user.id;
+        const processAndRender = async (rooms) => { const processed = []; for (const r of rooms) { if (!r || !r.id) continue; const display = await resolveRoomDisplay(r); processed.push({ ...r, display_name: display.name, display_avatar: display.avatar }); } state.allRooms = processed; window.filterRooms(); };
+        if (state.isOfflineMode) { const localRooms = await localDB.getAll('rooms'); await processAndRender(localRooms); updateLobbyAvatar(); return; }
         window.setLoading(true, "Syncing...");
-        try {
-            const { data: rooms, error } = await execQuery(db.from('rooms').select('*').order('created_at', { ascending: false }));
-            if (error) throw error;
-            if (rooms) {
-                await localDB.clear('rooms');
-                if (rooms.length > 0) await localDB.putAll('rooms', rooms);
-                await localDB.saveUserTree(uid, rooms);
-                await processAndRender(rooms);
-            }
-        } catch (e) { window.toast("Sync failed."); }
-        window.setLoading(false);
-        updateLobbyAvatar();
+        try { const { data: rooms, error } = await execQuery(db.from('rooms').select('*').order('created_at', { ascending: false })); if (error) throw error; if (rooms) { await localDB.clear('rooms'); if (rooms.length > 0) await localDB.putAll('rooms', rooms); await localDB.saveUserTree(uid, rooms); await processAndRender(rooms); } } catch (e) { window.toast("Sync failed."); }
+        window.setLoading(false); updateLobbyAvatar();
     };
 
     window.filterRooms = () => {
-        const q = $('search-bar').value.toLowerCase();
-        const list = $('room-list');
-        const uid = state.user?.id;
-        const filtered = state.allRooms.filter(r => {
-            if (!r.is_direct && !r.is_visible) return false;
-            const name = r.display_name || r.name || '';
-            if (!name.toLowerCase().includes(q)) return false;
-            return true;
-        });
+        const q = $('search-bar').value.toLowerCase(); const list = $('room-list'); const uid = state.user?.id;
+        const filtered = state.allRooms.filter(r => { if (!r.is_direct && !r.is_visible) return false; const name = r.display_name || r.name || ''; if (!name.toLowerCase().includes(q)) return false; return true; });
         if (filtered.length === 0) list.innerHTML = "";
         else list.innerHTML = filtered.map(r => `<div class="room-card" onclick="window.joinAttempt('${r.id}')"><div class="chat-avatar" style="width:36px;height:36px;margin-right:10px;font-size:13px">${r.display_avatar ? `<img src="${r.display_avatar}">` : (r.display_name||'G').charAt(0)}</div><span class="room-name">${esc(r.display_name)}</span><span class="room-icon">${r.is_direct ? '<i data-lucide="user" style="width:14px;height:14px"></i>' : ''}${r.has_password ? '<i data-lucide="lock" style="width:14px;height:14px"></i>' : ''}</span></div>`).join('');
     };
 
     window.joinAttempt = async (id) => {
-        const openLocal = async () => {
-            const meta = await localDB.get('rooms', id);
-            if (meta && meta.id) {
-                state.pending = meta;
-                if (meta.has_password) {
-                    updateGateUI(meta);
-                    window.nav('scr-gate');
-                }
-                else await window.openVault(meta.id, meta.name, null, meta.salt, meta);
-            } else window.toast("Chat not found locally.");
-        };
+        const openLocal = async () => { const meta = await localDB.get('rooms', id); if (meta && meta.id) { state.pending = meta; if (meta.has_password) { updateGateUI(meta); window.nav('scr-gate'); } else await window.openVault(meta.id, meta.name, null, meta.salt, meta); } else window.toast("Chat not found locally."); };
         if (state.isOfflineMode) { await openLocal(); return; }
         window.setLoading(true, "Accessing...");
         try {
-            const { data: canAccess, error: rpcError } = await execQuery(db.rpc('can_access_room', { p_room_id: id }));
-            if (rpcError) throw rpcError;
-            if (!canAccess) throw new Error("Access denied");
-            const { data, error } = await execQuery(db.from('rooms').select('*').eq('id', id).single());
-            if (error) throw error;
-            window.setLoading(false);
-            if (data && data.id) await localDB.put('rooms', data);
-            state.pending = data;
-            if (data.has_password) {
-                updateGateUI(data);
-                window.nav('scr-gate');
-            }
-            else window.openVault(data.id, data.name, null, data.salt, data);
-        } catch (e) {
-            window.setLoading(false);
-            window.toast("Connection lost.");
-            setAppMode(true);
-            await openLocal();
-        }
+            const { data: canAccess, error: rpcError } = await execQuery(db.rpc('can_access_room', { p_room_id: id })); if (rpcError) throw rpcError; if (!canAccess) throw new Error("Access denied");
+            const { data, error } = await execQuery(db.from('rooms').select('*').eq('id', id).single()); if (error) throw error;
+            window.setLoading(false); if (data && data.id) await localDB.put('rooms', data); state.pending = data;
+            if (data.has_password) { updateGateUI(data); window.nav('scr-gate'); } else window.openVault(data.id, data.name, null, data.salt, data);
+        } catch (e) { window.setLoading(false); window.toast("Connection lost."); setAppMode(true); await openLocal(); }
     };
 
     window.joinPrivate = async () => {
-        if (!state.user) return window.toast("Please log in.");
-        const id = $('join-id').value.trim();
-        if (!id) return;
-        if (state.isOfflineMode) {
-            const meta = await localDB.get('rooms', id);
-            if (meta) window.joinAttempt(id);
-            else window.toast("Connection required.");
-            return;
-        }
+        if (!state.user) return window.toast("Please log in."); const id = $('join-id').value.trim(); if (!id) return;
+        if (state.isOfflineMode) { const meta = await localDB.get('rooms', id); if (meta) window.joinAttempt(id); else window.toast("Connection required."); return; }
         window.setLoading(true, "Checking...");
         try {
-            const { data: canAccess } = await execQuery(db.rpc('can_access_room', { p_room_id: id }));
-            if (!canAccess) { window.setLoading(false); return window.toast("Access denied."); }
-            const { data } = await execQuery(db.from('rooms').select('*').eq('id', id).single());
-            window.setLoading(false);
-            if (data) {
-                await localDB.put('rooms', data);
-                state.pending = data;
-                if (data.has_password) {
-                    updateGateUI(data);
-                    window.nav('scr-gate');
-                }
-                else window.openVault(data.id, data.name, null, data.salt, data);
-            } else window.toast("Chat not found.");
+            const { data: canAccess } = await execQuery(db.rpc('can_access_room', { p_room_id: id })); if (!canAccess) { window.setLoading(false); return window.toast("Access denied."); }
+            const { data } = await execQuery(db.from('rooms').select('*').eq('id', id).single()); window.setLoading(false);
+            if (data) { await localDB.put('rooms', data); state.pending = data; if (data.has_password) { updateGateUI(data); window.nav('scr-gate'); } else window.openVault(data.id, data.name, null, data.salt, data); }
+            else window.toast("Chat not found.");
         } catch (e) { window.setLoading(false); window.toast("Network error."); }
     };
 
     const init = async () => {
-        await localDB.init();
-        monitorConnection();
-        if (navigator.onLine) { await warmUpAvatarCache(); }
-        const storedEmail = localStorage.getItem('hrn_auth_email');
-        const storedPass = localStorage.getItem('hrn_auth_pass');
+        await localDB.init(); monitorConnection(); if (navigator.onLine) { await warmUpAvatarCache(); }
+        const storedEmail = localStorage.getItem('hrn_auth_email'); const storedPass = localStorage.getItem('hrn_auth_pass');
         if (navigator.onLine) {
-            setAppMode(false);
-            setupGlobalPresence(null);
+            setAppMode(false); setupGlobalPresence(null);
             if (storedEmail && storedPass) {
-                window.setLoading(true, "Auto-logging in...");
-                const success = await attemptLogin(storedEmail, storedPass);
-                window.setLoading(false);
-                if (success) {
-                    setupGlobalPresence(state.user.id);
-                    window.nav('scr-lobby');
-                    window.loadRooms();
-                } else {
-                    const knownUser = await localDB.get('known_users', storedEmail);
-                    const hashInput = await sha256(storedPass + storedEmail);
-                    if (knownUser && knownUser.pass_hash === hashInput) {
-                        state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata };
-                        setAppMode(true);
-                        window.nav('scr-lobby');
-                        window.loadRooms();
-                        window.toast("Offline mode.");
-                    } else {
-                        localStorage.removeItem('hrn_auth_email');
-                        localStorage.removeItem('hrn_auth_pass');
-                        window.nav('scr-start');
-                    }
-                }
+                window.setLoading(true, "Auto-logging in..."); const success = await attemptLogin(storedEmail, storedPass); window.setLoading(false);
+                if (success) { setupGlobalPresence(state.user.id); window.nav('scr-lobby'); window.loadRooms(); }
+                else { const knownUser = await localDB.get('known_users', storedEmail); const hashInput = await sha256(storedPass + storedEmail); if (knownUser && knownUser.pass_hash === hashInput) { state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata }; setAppMode(true); window.nav('scr-lobby'); window.loadRooms(); window.toast("Offline mode."); } else { localStorage.removeItem('hrn_auth_email'); localStorage.removeItem('hrn_auth_pass'); window.nav('scr-start'); } }
             } else window.nav('scr-start');
         } else {
-            setAppMode(true);
-            startInternetCheck();
-            if (storedEmail && storedPass) {
-                const knownUser = await localDB.get('known_users', storedEmail);
-                const hashInput = await sha256(storedPass + storedEmail);
-                if (knownUser && knownUser.pass_hash === hashInput) {
-                    state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata };
-                    window.nav('scr-lobby');
-                    window.loadRooms();
-                    window.toast("Offline mode.");
-                } else {
-                    window.nav('scr-login');
-                    $('l-email').value = storedEmail;
-                    $('l-pass').value = storedPass;
-                }
-            } else window.nav('scr-start');
+            setAppMode(true); startInternetCheck();
+            if (storedEmail && storedPass) { const knownUser = await localDB.get('known_users', storedEmail); const hashInput = await sha256(storedPass + storedEmail); if (knownUser && knownUser.pass_hash === hashInput) { state.user = { id: knownUser.userId, email: knownUser.email, user_metadata: knownUser.metadata }; window.nav('scr-lobby'); window.loadRooms(); window.toast("Offline mode."); } else { window.nav('scr-login'); $('l-email').value = storedEmail; $('l-pass').value = storedPass; } } else window.nav('scr-start');
         }
         window.setLoading(false);
     };
+
+    const warmUpAvatarCache = async () => { if (state.isOfflineMode) return; const profiles = await localDB.getAll('profiles'); if (!profiles || profiles.length === 0) return; profiles.forEach(p => { if (p && p.id) state.profileCache[p.id] = p; }); };
 
     init();
 }
