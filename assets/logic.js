@@ -11,12 +11,12 @@ export function initHRNchat(customConfig = {}) {
         maxMessages: customConfig.maxMessages || 50,
         historyLoadLimit: customConfig.historyLoadLimit || 20,
         rateLimitMs: customConfig.rateLimitMs || 1000,
-        presenceHeartbeatMs: customConfig.presenceHeartbeatMs || 1000, // Nu configureerbaar
+        presenceHeartbeatMs: customConfig.presenceHeartbeatMs || 1000,
         verificationCodeExpiry: customConfig.verificationCodeExpiry || 600,
-        maxMessageLength: customConfig.maxMessageLength || 10000,
+        maxMessageLength: customConfig.maxMessageLength || 1000,
         proxyUrl: customConfig.proxyUrl || "https://vercel-serverless-hrn.vercel.app/api/CORSproxy.js?url=",
         requestTimeout: 3000,
-        backgroundDisconnectMs: customConfig.backgroundDisconnectMs || 10000 // Nu configureerbaar
+        backgroundDisconnectMs: customConfig.backgroundDisconnectMs || 10000
     };
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
     const DB_NAME = 'HRN_LOCAL_DB_6';
@@ -760,7 +760,7 @@ export function initHRNchat(customConfig = {}) {
             state.globalPresenceChannel = null;
         }
         state.isChatChannelReady = false;
-        setConnectionVisuals('offline');
+        // Do not set visuals here, let the caller decide or handle specifically
     };
     const queryOnlineCountImmediately = async () => {
         if (!state.presenceChannel) return;
@@ -852,16 +852,20 @@ export function initHRNchat(customConfig = {}) {
         container.scrollTop = container.scrollHeight;
     };
     const attemptHardReconnect = () => {
-        // FIX: Stop reconnect attempt if the tab is not focused/visible
-        if (document.hidden) return;
+        // FIX: Stop immediately if no room is active (prevents reconnect after leave)
+        if (!state.currentRoomId) return;
         
+        if (document.hidden) return;
         if (!state.user || state.isOfflineMode || state.isCapacityBlocked) return;
+        
         if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
         if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
         state.reconnectTimer = null;
+        
         cleanupChannels(true);
         state.isReconnecting = !!state.currentRoomId;
         setConnectionVisuals('connecting');
+        
         if (state.currentRoomId) {
             const timeout = getConnectionTimeout();
             state.connectionTimeoutTimer = setTimeout(() => {
@@ -1081,13 +1085,13 @@ export function initHRNchat(customConfig = {}) {
                     clearTimeout(state.connectionTimeoutTimer);
                     state.connectionTimeoutTimer = null;
                 }
-                // FIX: Check !document.hidden to prevent reconnect loop in background
-                if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive && !document.hidden) {
+                // Check !currentRoomId to prevent reconnect if we just left
+                if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive && !document.hidden && state.currentRoomId) {
                     state.isChatChannelReady = false;
                     if (!state.isReconnecting) {
                         state.isReconnecting = true;
                         setConnectionVisuals('connecting');
-                        state.reconnectTimer = setTimeout(attemptHardReconnect, 1000);
+                        state.reconnectTimer = setTimeout(attemptHardReconnect, 2000); // Increased to 2s
                     }
                 }
             }
@@ -1126,14 +1130,14 @@ export function initHRNchat(customConfig = {}) {
                         user_id: myId,
                         online_at: new Date().toISOString()
                     });
-                }, CONFIG.presenceHeartbeatMs); // Gebruikt de configureerbare waarde
+                }, CONFIG.presenceHeartbeatMs);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                 state.isPresenceSubscribed = false;
-                // FIX: Check !document.hidden to prevent reconnect loop in background
-                if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive && !document.hidden) {
+                // Check !currentRoomId to prevent reconnect if we just left
+                if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive && !document.hidden && state.currentRoomId) {
                     state.isReconnecting = true;
                     setConnectionVisuals('connecting');
-                    state.reconnectTimer = setTimeout(attemptHardReconnect, 1000);
+                    state.reconnectTimer = setTimeout(attemptHardReconnect, 2000);
                 }
             }
         });
@@ -1185,7 +1189,6 @@ export function initHRNchat(customConfig = {}) {
         document.addEventListener('visibilitychange', async () => {
             if (state.isCapacityBlocked) return;
             if (document.visibilityState === 'hidden') {
-                // FIX: Clear reconnect timers when hidden to stop background attempts
                 if(state.reconnectTimer) clearTimeout(state.reconnectTimer);
                 state.reconnectTimer = null;
                 
@@ -1202,7 +1205,7 @@ export function initHRNchat(customConfig = {}) {
                             console.error("WS Disconnect Error", e);
                         }
                     }
-                }, CONFIG.backgroundDisconnectMs); // Gebruikt de configureerbare waarde
+                }, CONFIG.backgroundDisconnectMs);
             } else if (document.visibilityState === 'visible') {
                 if (state.backgroundDisconnectTimer) clearTimeout(state.backgroundDisconnectTimer);
                 state.backgroundDisconnectTimer = null;
@@ -1220,7 +1223,6 @@ export function initHRNchat(customConfig = {}) {
                         if (state.currentRoomId) attemptHardReconnect();
                     }
                 } else if (!state.isChatChannelReady && state.currentRoomId) {
-                    // FIX: Trigger reconnect immediately when tab becomes visible if channel was down
                     attemptHardReconnect();
                 } else if (navigator.onLine && !state.globalPresenceReady) {
                     window.goOnline();
@@ -2086,15 +2088,20 @@ export function initHRNchat(customConfig = {}) {
     };
     window.leaveChat = async () => {
         window.setLoading(true, "Leaving...");
-        if (state.chatChannel) state.chatChannel.unsubscribe();
-        state.chatChannel = null;
+        // FIX: Clear state FIRST to block any auto-reconnect logic triggered by unsubscribe
         state.currentRoomId = null;
         state.currentRoomData = null;
+
+        if (state.chatChannel) state.chatChannel.unsubscribe();
+        state.chatChannel = null;
+        
         if (state.presenceChannel) state.presenceChannel.unsubscribe();
         state.presenceChannel = null;
         state.isPresenceSubscribed = false;
+        
         if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
         state.heartbeatInterval = null;
+        
         setConnectionVisuals('offline');
         if ($('info-edit-btn')) $('info-edit-btn').style.display = 'none';
         window.nav('scr-lobby');
@@ -2409,10 +2416,14 @@ export function initHRNchat(customConfig = {}) {
     window.handleLogout = async (e) => {
         if (!e || !e.isTrusted) return;
         window.setLoading(true, "Leaving...");
+        // FIX: Clear state first
+        state.currentRoomId = null;
+        state.user = null;
+        
         await cleanupChannels();
         localStorage.removeItem('hrn_auth_email');
         localStorage.removeItem('hrn_auth_pass');
-        state.user = null;
+        
         setAppMode(false);
         state.isCapacityBlocked = false;
         await db.auth.signOut();
