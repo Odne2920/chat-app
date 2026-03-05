@@ -11,7 +11,7 @@ export function initHRNchat(customConfig = {}) {
         maxMessages: customConfig.maxMessages || 50,
         historyLoadLimit: customConfig.historyLoadLimit || 20,
         rateLimitMs: customConfig.rateLimitMs || 1000,
-        presenceHeartbeatMs: customConfig.presenceHeartbeatMs || 10000, // Nu configureerbaar
+        presenceHeartbeatMs: customConfig.presenceHeartbeatMs || 1000, // Nu configureerbaar
         verificationCodeExpiry: customConfig.verificationCodeExpiry || 600,
         maxMessageLength: customConfig.maxMessageLength || 10000,
         proxyUrl: customConfig.proxyUrl || "https://vercel-serverless-hrn.vercel.app/api/CORSproxy.js?url=",
