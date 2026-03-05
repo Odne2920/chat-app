@@ -16,7 +16,7 @@ export function initHRNchat(customConfig = {}) {
         maxMessageLength: customConfig.maxMessageLength || 10000,
         proxyUrl: customConfig.proxyUrl || "https://vercel-serverless-hrn.vercel.app/api/CORSproxy.js?url=",
         requestTimeout: 3000,
-        backgroundDisconnectMs: customConfig.backgroundDisconnectMs || 1
+        backgroundDisconnectMs: customConfig.backgroundDisconnectMs || 10000
     };
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
     const DB_NAME = 'HRN_LOCAL_DB_6';
@@ -513,22 +513,19 @@ export function initHRNchat(customConfig = {}) {
                     const localTime = profile?.updated_at ? new Date(profile.updated_at).getTime() : 0;
                     const serverTime = serverProfile.updated_at ? new Date(serverProfile.updated_at).getTime() : 0;
                     const needsUpdate = !profile || serverTime > localTime || !profile.full_name;
+                    let newProfileData = profile || serverProfile;
                     if (needsUpdate) {
-                        const newProfileData = {
+                        newProfileData = {
                             ...serverProfile
                         };
-                        const urlChanged = !profile || profile.avatar_url !== serverProfile.avatar_url;
-                        const needsImageCache = urlChanged || !profile?.cached_avatar;
-                        if (!needsImageCache && profile.cached_avatar) {
-                            newProfileData.cached_avatar = profile.cached_avatar;
-                        }
-                        if (needsImageCache && serverProfile.avatar_url) {
-                            await cacheAvatar(newProfileData);
-                            profile = await localDB.get('profiles', userId);
-                        } else {
-                            await localDB.put('profiles', newProfileData);
-                            profile = newProfileData;
-                        }
+                    }
+                    const needsImageCache = !newProfileData.cached_avatar && newProfileData.avatar_url && !newProfileData.avatar_url.startsWith('data:');
+                    if (needsImageCache) {
+                        await cacheAvatar(newProfileData);
+                        profile = await localDB.get('profiles', userId);
+                    } else {
+                        if (needsUpdate) await localDB.put('profiles', newProfileData);
+                        profile = newProfileData;
                     }
                 }
             } catch (e) {
@@ -1185,6 +1182,9 @@ export function initHRNchat(customConfig = {}) {
                     if (!state.isOfflineMode && !state.isCapacityBlocked) {
                         cleanupChannels(false);
                         state.isBackgroundDisconnectActive = true;
+                        try {
+                            db.realtime.disconnect();
+                        } catch (e) {}
                     }
                 }, CONFIG.backgroundDisconnectMs);
             } else if (document.visibilityState === 'visible') {
@@ -1193,6 +1193,9 @@ export function initHRNchat(customConfig = {}) {
                 if (state.isBackgroundDisconnectActive) {
                     state.isBackgroundDisconnectActive = false;
                     if (state.user && !state.isOfflineMode) {
+                        try {
+                            db.realtime.connect();
+                        } catch (e) {}
                         setupGlobalPresence(state.user.id);
                         if (state.currentRoomId) attemptHardReconnect();
                     }
