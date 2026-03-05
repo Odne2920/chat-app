@@ -852,6 +852,9 @@ export function initHRNchat(customConfig = {}) {
         container.scrollTop = container.scrollHeight;
     };
     const attemptHardReconnect = () => {
+        // FIX: Stop reconnect attempt if the tab is not focused/visible
+        if (document.hidden) return;
+        
         if (!state.user || state.isOfflineMode || state.isCapacityBlocked) return;
         if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
         if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
@@ -1078,7 +1081,8 @@ export function initHRNchat(customConfig = {}) {
                     clearTimeout(state.connectionTimeoutTimer);
                     state.connectionTimeoutTimer = null;
                 }
-                if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive) {
+                // FIX: Check !document.hidden to prevent reconnect loop in background
+                if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive && !document.hidden) {
                     state.isChatChannelReady = false;
                     if (!state.isReconnecting) {
                         state.isReconnecting = true;
@@ -1125,7 +1129,8 @@ export function initHRNchat(customConfig = {}) {
                 }, CONFIG.presenceHeartbeatMs);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                 state.isPresenceSubscribed = false;
-                if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive) {
+                // FIX: Check !document.hidden to prevent reconnect loop in background
+                if (!state.isOfflineMode && !state.isCapacityBlocked && !state.isBackgroundDisconnectActive && !document.hidden) {
                     state.isReconnecting = true;
                     setConnectionVisuals('connecting');
                     state.reconnectTimer = setTimeout(attemptHardReconnect, 1000);
@@ -1180,6 +1185,10 @@ export function initHRNchat(customConfig = {}) {
         document.addEventListener('visibilitychange', async () => {
             if (state.isCapacityBlocked) return;
             if (document.visibilityState === 'hidden') {
+                // FIX: Clear reconnect timers when hidden to stop background attempts
+                if(state.reconnectTimer) clearTimeout(state.reconnectTimer);
+                state.reconnectTimer = null;
+                
                 if (state.backgroundDisconnectTimer) clearTimeout(state.backgroundDisconnectTimer);
                 state.backgroundDisconnectTimer = setTimeout(async () => {
                     if (!state.isOfflineMode && !state.isCapacityBlocked) {
@@ -1211,6 +1220,7 @@ export function initHRNchat(customConfig = {}) {
                         if (state.currentRoomId) attemptHardReconnect();
                     }
                 } else if (!state.isChatChannelReady && state.currentRoomId) {
+                    // FIX: Trigger reconnect immediately when tab becomes visible if channel was down
                     attemptHardReconnect();
                 } else if (navigator.onLine && !state.globalPresenceReady) {
                     window.goOnline();
