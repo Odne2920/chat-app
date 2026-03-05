@@ -36,7 +36,7 @@ export function initHRNchat(customConfig = {}) {
         sessionStartTime: null,
         isPresenceSubscribed: false,
         lastReconnectAttempt: 0,
-        pending: null,
+        pending: null, // Now stores the full room object
         lastCreated: null,
         lastCreatedPass: null,
         processingAction: false,
@@ -353,11 +353,8 @@ export function initHRNchat(customConfig = {}) {
         catch (error) { return [null, error]; }
     };
 
-    // Removed processImageToCache as per request to use direct URLs
-
     const cacheAvatar = async (profile) => {
         if (!profile) return profile;
-        // Save metadata locally, do not process image to Base64
         await localDB.put('profiles', profile);
         state.profileCache[profile.id] = profile;
         return profile;
@@ -365,11 +362,8 @@ export function initHRNchat(customConfig = {}) {
 
     const cacheRoomImage = async (room) => {
         if (!room) return room;
-        // Save metadata locally
         const dbRoom = await localDB.get('rooms', room.id);
-        // If we want to ensure the latest metadata is saved locally per account:
         if (dbRoom) { 
-            // Merge potentially new data
             const updatedRoom = { ...dbRoom, ...room };
             await localDB.put('rooms', updatedRoom); 
         } else {
@@ -379,18 +373,12 @@ export function initHRNchat(customConfig = {}) {
     };
 
     const warmUpAvatarCache = async () => {
-        // No longer needed to convert images, just ensuring profiles are in state cache
         if (state.isOfflineMode) return;
         const profiles = await localDB.getAll('profiles');
         if (!profiles || profiles.length === 0) return;
         profiles.forEach(p => {
             if (p && p.id) state.profileCache[p.id] = p;
         });
-    };
-
-    const warmUpRoomImageCache = async () => {
-        // No longer needed to convert images
-        return;
     };
 
     const getProfiles = async (userIds) => {
@@ -407,7 +395,7 @@ export function initHRNchat(customConfig = {}) {
                 if (profiles) {
                     await Promise.all(profiles.map(p => {
                         state.profileCache[p.id] = p;
-                        return cacheAvatar(p); // Saves to localDB
+                        return cacheAvatar(p);
                     }));
                 }
             } catch (e) { console.warn("Batch profile fetch failed", e); }
@@ -449,7 +437,6 @@ export function initHRNchat(customConfig = {}) {
     const resolveRoomDisplay = async (room) => {
         if (!room) return { name: 'Chat', avatar: null };
         if (!room.is_direct) {
-            // Just use the avatar_url directly
             let avatar = room.avatar_url || null;
             return { name: room.name, avatar: avatar };
         }
@@ -461,9 +448,25 @@ export function initHRNchat(customConfig = {}) {
         if (!otherId) return { name: 'Direct Message', avatar: null };
         const profile = await getProfile(otherId);
         if (!profile) return { name: 'Unknown User', avatar: null };
-        // Use avatar_url directly
         const avatar = profile.avatar_url || null;
         return { name: profile.full_name || 'User', avatar: avatar };
+    };
+
+    // Helper to update Gate UI before entering password
+    const updateGateUI = async (room) => {
+        if (!room) return;
+        const display = await resolveRoomDisplay(room);
+        
+        // Update Gate screen elements (assuming IDs: gate-room-name, gate-room-avatar)
+        const nameEl = $('gate-room-name');
+        const avatarEl = $('gate-room-avatar');
+        
+        if (nameEl) nameEl.innerText = display.name;
+        
+        if (avatarEl) {
+            if (display.avatar) avatarEl.innerHTML = `<img src="${display.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">`;
+            else avatarEl.innerHTML = `<span style="font-size:24px;font-weight:700;color:var(--accent)">${display.name.charAt(0)}</span>`;
+        }
     };
 
     const workerCode = `
@@ -1784,7 +1787,6 @@ export function initHRNchat(customConfig = {}) {
         } else {
             n = $('c-name').value.trim();
             const inputUrl = $('c-avatar').value.trim();
-            // Just use the URL directly, no conversion
             if (inputUrl) {
                 avatarUrl = inputUrl;
             } else avatarUrl = null;
@@ -1825,6 +1827,7 @@ export function initHRNchat(customConfig = {}) {
     window.submitGate = async (e) => {
         if (!e || !e.isTrusted) return;
         const inputPass = $('gate-pass').value;
+        // state.pending is now the full room object
         if (state.isOfflineMode) { window.openVault(state.pending.id, state.pending.name, inputPass, state.pending.salt, state.pending); return; }
         const inputHash = await sha256(inputPass + state.pending.salt);
         window.setLoading(true, "Verifying...");
@@ -1851,7 +1854,7 @@ export function initHRNchat(customConfig = {}) {
     };
 
     window.copySId = () => { if (!state.lastCreated) return; navigator.clipboard.writeText(state.lastCreated.id); window.toast("ID copied."); };
-    const processAvatarUrl = async (url) => { if (!url || url.startsWith('data:')) return url; return url; }; // No conversion
+    const processAvatarUrl = async (url) => { if (!url || url.startsWith('data:')) return url; return url; };
     window.enterCreated = () => { if (!state.lastCreated) return; window.openVault(state.lastCreated.id, state.lastCreated.name, state.lastCreatedPass, state.lastCreated.salt, state.lastCreated); state.lastCreatedPass = null; };
 
     const { data: { subscription } } = db.auth.onAuthStateChange(async (ev, ses) => {
@@ -1941,7 +1944,6 @@ export function initHRNchat(customConfig = {}) {
                 if (rooms.length > 0) await localDB.putAll('rooms', rooms);
                 await localDB.saveUserTree(uid, rooms);
                 await processAndRender(rooms);
-                warmUpRoomImageCache(); // Still calling it, but it does nothing heavy now
             }
         } catch (e) { window.toast("Sync failed."); }
         window.setLoading(false);
@@ -1966,8 +1968,11 @@ export function initHRNchat(customConfig = {}) {
         const openLocal = async () => {
             const meta = await localDB.get('rooms', id);
             if (meta && meta.id) {
-                state.pending = { id: meta.id, name: meta.name, salt: meta.salt };
-                if (meta.has_password) window.nav('scr-gate');
+                state.pending = meta; // Store full object
+                if (meta.has_password) {
+                    updateGateUI(meta);
+                    window.nav('scr-gate');
+                }
                 else await window.openVault(meta.id, meta.name, null, meta.salt, meta);
             } else window.toast("Chat not found locally.");
         };
@@ -1981,8 +1986,11 @@ export function initHRNchat(customConfig = {}) {
             if (error) throw error;
             window.setLoading(false);
             if (data && data.id) await localDB.put('rooms', data);
-            state.pending = { id: data.id, name: data.name, salt: data.salt };
-            if (data.has_password) window.nav('scr-gate');
+            state.pending = data; // Store full object
+            if (data.has_password) {
+                updateGateUI(data);
+                window.nav('scr-gate');
+            }
             else window.openVault(data.id, data.name, null, data.salt, data);
         } catch (e) {
             window.setLoading(false);
@@ -2010,8 +2018,11 @@ export function initHRNchat(customConfig = {}) {
             window.setLoading(false);
             if (data) {
                 await localDB.put('rooms', data);
-                state.pending = { id: data.id, name: data.name, salt: data.salt };
-                if (data.has_password) window.nav('scr-gate');
+                state.pending = data; // Store full object
+                if (data.has_password) {
+                    updateGateUI(data);
+                    window.nav('scr-gate');
+                }
                 else window.openVault(data.id, data.name, null, data.salt, data);
             } else window.toast("Chat not found.");
         } catch (e) { window.setLoading(false); window.toast("Network error."); }
@@ -2020,7 +2031,6 @@ export function initHRNchat(customConfig = {}) {
     const init = async () => {
         await localDB.init();
         monitorConnection();
-        // No need to warm up image cache with processing, just load state cache
         if (navigator.onLine) { await warmUpAvatarCache(); }
         const storedEmail = localStorage.getItem('hrn_auth_email');
         const storedPass = localStorage.getItem('hrn_auth_pass');
