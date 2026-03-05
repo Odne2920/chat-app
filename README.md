@@ -1,5 +1,4 @@
 STATUS: Working but there is a caching issue that needs to be fixed.
-A reconnect bug has also been found.
 --- ---
 
 <a href="https://hrn-chat.github.io/" target="_blank">
