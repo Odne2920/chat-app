@@ -1,7 +1,7 @@
 /* 
  *  © 2026 
  *  GitHub: https://github.com/hrn-chat/hrn-chat.github.io
- *  Version: 1.0.5
+ *  Version: 1.0.6 (Tab Logic Overhaul)
  *  assets/logic.js 
  *  MIT License
  *  GH: HyperRushNet & hrn-chat
@@ -28,8 +28,8 @@ export function initHRNchat(customConfig = {}) {
     const AVATARS = ['./assets/avatars/1.webp', './assets/avatars/2.webp', './assets/avatars/3.webp', './assets/avatars/4.webp', './assets/avatars/5.webp'];
     const DB_NAME = 'HRN_LOCAL_DB_4';
     const DB_VERSION = 1;
-    const MASTER_LOCK_KEY = 'hrn_master_lock';
-    const TAB_ID_KEY = 'hrn_tab_id';
+    const TAB_ID_KEY = 'hrn_tab_id'; // Kept for unique ID persistence in session only
+
     const state = {
         user: null,
         currentRoomId: null,
@@ -94,8 +94,14 @@ export function initHRNchat(customConfig = {}) {
         authListener: null,
         loginRetryCount: 0,
         internetCheckInterval: null,
-        tabSyncInterval: null,
-        isMasterTab: false,
+        
+        // --- NEW TAB SYNC STATE ---
+        masterChannel: null, // BroadcastChannel reference
+        masterHeartbeatTimer: null, // Timer for master to ping
+        masterWatchdogTimer: null, // Timer for slaves to detect master death
+        isMasterTab: false, 
+        // --------------------------
+
         ui: {
             isOverlayOpen: false,
             isContextOpen: false,
@@ -1202,7 +1208,9 @@ export function initHRNchat(customConfig = {}) {
                 if (state.isCapacityBlocked) return;
                 if (state.isOfflineMode) return;
                 if (!state.isMasterTab) {
-                    window.forceClaimMaster();
+                    // If we become visible but aren't master, we check if master is alive
+                    // The watchdog handles this, but we can speed it up
+                    checkMasterLiveness(); 
                 } else {
                     if (!state.isChatChannelReady && state.currentRoomId) {
                         attemptHardReconnect();
@@ -1549,14 +1557,92 @@ export function initHRNchat(customConfig = {}) {
         input.value = '';
         window.toast("User added.");
     };
-    const handleDuplicateTab = () => {
-        state.isMasterTab = false;
-        cleanupChannels(false);
-        if (state.globalPresenceChannel) {
-            state.globalPresenceChannel.unsubscribe();
-            state.globalPresenceChannel = null;
+
+    // ---------------------------------------------------------
+    // NEW MASTER TAB LOGIC (BROADCAST CHANNEL)
+    // ---------------------------------------------------------
+    
+    // 1. Setup Channel
+    const setupTabChannel = () => {
+        try {
+            state.masterChannel = new BroadcastChannel('hrn_master_sync');
+            state.masterChannel.onmessage = handleMasterMessage;
+        } catch(e) {
+            // Fallback for extremely old browsers (unlikely)
+            state.isMasterTab = true; 
+            return;
         }
-        setConnectionVisuals('offline');
+    };
+
+    // 2. Message Handler
+    const handleMasterMessage = (e) => {
+        const { type, tabId, force } = e.data;
+        if (tabId === state.tabId) return; // Ignore self
+
+        if (type === 'heartbeat') {
+            // Master is alive. Reset watchdog.
+            resetMasterWatchdog();
+
+            // Conflict Resolution: If I am master, and they are master...
+            if (state.isMasterTab) {
+                // Compare IDs. Higher ID wins to prevent split-brain.
+                if (tabId > state.tabId || force) {
+                    yieldMastership();
+                } else {
+                    // I am superior. Re-assert dominance immediately.
+                    sendHeartbeat();
+                }
+            }
+        }
+    };
+
+    // 3. Watchdog (Detects if Master crashed)
+    const resetMasterWatchdog = () => {
+        clearTimeout(state.masterWatchdogTimer);
+        // If no heartbeat in 5s, assume master is dead -> claim mastership
+        state.masterWatchdogTimer = setTimeout(claimMaster, 5000);
+    };
+
+    const checkMasterLiveness = () => {
+        // When tab becomes visible, if not master, ping to check
+        if(!state.isMasterTab) {
+             // Accelerate watchdog check
+             clearTimeout(state.masterWatchdogTimer);
+             state.masterWatchdogTimer = setTimeout(claimMaster, 1000);
+        }
+    };
+
+    // 4. Claim Logic
+    const claimMaster = () => {
+        const wasSlave = !state.isMasterTab;
+        state.isMasterTab = true;
+        
+        // Start sending heartbeats
+        clearInterval(state.masterHeartbeatTimer);
+        sendHeartbeat(); // Send immediately
+        state.masterHeartbeatTimer = setInterval(sendHeartbeat, 2000);
+
+        if (wasSlave) {
+            // Recovery Logic
+            const overlay = $('block-overlay');
+            if (overlay) overlay.classList.remove('active');
+            window.toast("Connection restored.");
+            
+            // Reconnect sockets if needed
+            if (state.user && navigator.onLine) {
+                window.goOnline();
+            }
+            updateSendButtonState();
+        }
+    };
+
+    // 5. Yield Logic
+    const yieldMastership = () => {
+        if (!state.isMasterTab) return;
+        state.isMasterTab = false;
+        clearInterval(state.masterHeartbeatTimer);
+        
+        // UI Logic
         const overlay = $('block-overlay');
         if (overlay) {
             overlay.innerHTML = `
@@ -1567,40 +1653,47 @@ export function initHRNchat(customConfig = {}) {
             `;
             overlay.classList.add('active');
         }
+        
+        cleanupChannels(false);
         updateSendButtonState();
-        updatePresenceUI();
+        
+        // Restart watchdog in case the new master crashes
+        resetMasterWatchdog();
     };
-    const startTabSync = () => {
+
+    // 6. Heartbeat Sender
+    const sendHeartbeat = () => {
+        if (state.masterChannel && state.isMasterTab) {
+            state.masterChannel.postMessage({ type: 'heartbeat', tabId: state.tabId });
+        }
+    };
+
+    // 7. Force Claim Button
+    window.forceClaimMaster = () => {
+        // Force claim logic: Set master, send forced heartbeat
         state.isMasterTab = true;
-        localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() }));
-
-        if (state.tabSyncInterval) clearInterval(state.tabSyncInterval);
-        const tick = () => {
-            const now = Date.now();
-            const masterLock = localStorage.getItem(MASTER_LOCK_KEY);
-            let lockData = null;
-            try { if (masterLock) lockData = JSON.parse(masterLock); } catch (e) {}
-
-            if (lockData && lockData.id === state.tabId) {
-                localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now }));
-                state.isMasterTab = true;
-            } else if (!lockData || now - lockData.ts > 5000) {
-                localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: now }));
-                state.isMasterTab = true;
-            } else {
-                if (state.isMasterTab) {
-                    handleDuplicateTab();
-                }
-            }
-        };
-        tick();
-        state.tabSyncInterval = setInterval(tick, 2000);
+        clearInterval(state.masterHeartbeatTimer);
+        state.masterChannel.postMessage({ type: 'heartbeat', tabId: state.tabId, force: true });
+        state.masterHeartbeatTimer = setInterval(sendHeartbeat, 2000);
+        
+        const overlay = $('block-overlay');
+        if (overlay) overlay.classList.remove('active');
+        
+        if (state.user && navigator.onLine) window.goOnline();
+        updateSendButtonState();
     };
+
+    // ---------------------------------------------------------
+    // END MASTER TAB LOGIC
+    // ---------------------------------------------------------
 
     const init = async () => {
         await localDB.init();
         monitorConnection();
-        startTabSync();
+        
+        // Initialize Tab Sync
+        setupTabChannel();
+        resetMasterWatchdog(); // Start as slave, wait to see if master exists
 
         window.nav('scr-start');
         window.setLoading(false);
@@ -1618,10 +1711,6 @@ export function initHRNchat(customConfig = {}) {
         }
     };
     
-    window.forceClaimMaster = () => {
-        localStorage.setItem(MASTER_LOCK_KEY, JSON.stringify({ id: state.tabId, ts: Date.now() }));
-        startTabSync();
-    };
     window.openOverlay = () => {
         const oc = $('overlay-container');
         if (oc) {
