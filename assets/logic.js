@@ -57,7 +57,6 @@ export function initHRNchat(customConfig = {}) {
         deleteConfirmTimeout: null,
         profileCache: {},
         profileCacheKeys: [],
-        roomImageCache: {},
         editingMessage: null,
         contextTarget: null,
         connectionStrength: '4g',
@@ -72,6 +71,7 @@ export function initHRNchat(customConfig = {}) {
         backgroundDisconnectTimer: null,
         isBackgroundDisconnectActive: false,
         isHardReconnecting: false,
+        isConnecting: false,
         ui: { isOverlayOpen: false, isContextOpen: false, overlayCloseLocked: false },
         dom: {}
     };
@@ -532,7 +532,7 @@ export function initHRNchat(customConfig = {}) {
 
     const attemptHardReconnect = () => {
         if (!state.currentRoomId || document.hidden || !state.user || state.isOfflineMode || state.isCapacityBlocked) return;
-        if (state.isHardReconnecting) return;
+        if (state.isHardReconnecting || state.isConnecting) return;
         state.isHardReconnecting = true;
 
         if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
@@ -566,15 +566,27 @@ export function initHRNchat(customConfig = {}) {
     };
 
     window.goOnline = async () => {
+        if (state.isConnecting || state.isHardReconnecting) return;
+        state.isConnecting = true;
+        
         stopInternetCheck(); state.isCapacityBlocked = false;
         const overlay = $('block-overlay'); if (overlay) overlay.classList.remove('active');
+        
         if (state.user) {
             const storedEmail = localStorage.getItem('hrn_auth_email'); const storedPass = localStorage.getItem('hrn_auth_pass');
             if (storedEmail && storedPass) {
                 const success = await attemptLogin(storedEmail, storedPass);
-                if (success) { setAppMode(false); setupGlobalPresence(state.user.id); if (state.currentRoomId) attemptHardReconnect(); window.loadRooms(); window.toast("Connected."); }
+                if (success) { 
+                    setAppMode(false); 
+                    if (db.realtime && typeof db.realtime.connect === 'function') db.realtime.connect();
+                    setupGlobalPresence(state.user.id); 
+                    if (state.currentRoomId) attemptHardReconnect(); 
+                    window.loadRooms(); 
+                    window.toast("Connected."); 
+                }
                 else { setAppMode(true); }
             } else { setAppMode(true); }
+            state.isConnecting = false;
             return;
         }
         const activeScreen = document.querySelector('.screen.active');
@@ -583,10 +595,18 @@ export function initHRNchat(customConfig = {}) {
         const storedEmail = localStorage.getItem('hrn_auth_email'); const storedPass = localStorage.getItem('hrn_auth_pass');
         if (storedEmail && storedPass) {
             const success = await attemptLogin(storedEmail, storedPass);
-            if (success) { setAppMode(false); setupGlobalPresence(state.user.id); window.nav('scr-lobby'); window.loadRooms(); window.toast("Connected."); }
+            if (success) { 
+                setAppMode(false); 
+                if (db.realtime && typeof db.realtime.connect === 'function') db.realtime.connect();
+                setupGlobalPresence(state.user.id); 
+                window.nav('scr-lobby'); 
+                window.loadRooms(); 
+                window.toast("Connected."); 
+            }
             else { window.toast("Connection failed."); }
             if (isAuthScreen) window.setLoading(false);
         } else { if (isAuthScreen) window.setLoading(false); else { window.toast("No saved login found."); setAppMode(true); } }
+        state.isConnecting = false;
     };
 
     window.stayOffline = async () => { const overlay = $('block-overlay'); if (overlay) overlay.classList.remove('active'); await fullDisconnect(); setAppMode(true); window.toast("Offline mode active."); if (state.user) window.loadRooms(); };
@@ -681,12 +701,21 @@ export function initHRNchat(customConfig = {}) {
     const stopInternetCheck = () => { if (state.internetCheckInterval) { clearInterval(state.internetCheckInterval); state.internetCheckInterval = null; } };
 
     const monitorConnection = () => {
-        const onlineHandler = () => { stopInternetCheck(); if (state.isOfflineMode) window.goOnline(); else { setConnectionVisuals('connecting'); if (state.currentRoomId) attemptHardReconnect(); else setConnectionVisuals('connected'); } };
+        const onlineHandler = () => { 
+            stopInternetCheck(); 
+            if (state.isOfflineMode) window.goOnline(); 
+            else { 
+                setConnectionVisuals('connecting'); 
+                if (state.currentRoomId) attemptHardReconnect(); 
+                else setConnectionVisuals('connected'); 
+            } 
+        };
         const offlineHandler = async () => {
             setAppMode(true);
             if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
             if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
             state.isHardReconnecting = false;
+            state.isConnecting = false;
             state.globalPresenceReady = false;
             try { await fullDisconnect(); } catch(e) {}
             startInternetCheck();
