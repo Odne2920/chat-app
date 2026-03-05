@@ -1,4 +1,3 @@
-STATUS: Working but there is a caching issue that needs to be fixed.
 --- ---
 
 <a href="https://hrn-chat.github.io/" target="_blank">
