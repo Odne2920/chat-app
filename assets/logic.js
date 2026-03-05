@@ -451,7 +451,8 @@ export function initHRNchat(customConfig = {}) {
             profile.cached_avatar = profile.avatar_url;
             return profile;
         }
-        if (profile.cached_avatar) return profile;
+        if (profile.cached_avatar && profile.cached_avatar.startsWith('data:')) return profile;
+        
         const dataUrl = await processImageToCache(profile.avatar_url);
         if (dataUrl) {
             profile.cached_avatar = dataUrl;
@@ -501,8 +502,10 @@ export function initHRNchat(customConfig = {}) {
     };
     const getProfile = async (userId) => {
         if (!userId) return null;
-        if (state.profileCache[userId]) return state.profileCache[userId];
+        if (state.profileCache[userId] && state.profileCache[userId].cached_avatar) return state.profileCache[userId];
+        
         let profile = await localDB.get('profiles', userId);
+        
         if (!state.isOfflineMode) {
             try {
                 const {
@@ -513,25 +516,25 @@ export function initHRNchat(customConfig = {}) {
                     const localTime = profile?.updated_at ? new Date(profile.updated_at).getTime() : 0;
                     const serverTime = serverProfile.updated_at ? new Date(serverProfile.updated_at).getTime() : 0;
                     const needsUpdate = !profile || serverTime > localTime || !profile.full_name;
-                    let newProfileData = profile || serverProfile;
+                    
+                    let profileToSave = profile || serverProfile;
                     if (needsUpdate) {
-                        newProfileData = {
-                            ...serverProfile
-                        };
+                        profileToSave = { ...serverProfile };
                     }
-                    const needsImageCache = !newProfileData.cached_avatar && newProfileData.avatar_url && !newProfileData.avatar_url.startsWith('data:');
-                    if (needsImageCache) {
-                        await cacheAvatar(newProfileData);
-                        profile = await localDB.get('profiles', userId);
+
+                    if (profileToSave.avatar_url && !profileToSave.cached_avatar) {
+                         profileToSave = await cacheAvatar(profileToSave);
+                         profile = profileToSave;
                     } else {
-                        if (needsUpdate) await localDB.put('profiles', newProfileData);
-                        profile = newProfileData;
+                         if (needsUpdate) await localDB.put('profiles', profileToSave);
+                         profile = profileToSave;
                     }
                 }
             } catch (e) {
                 console.warn("Profile fetch failed", e);
             }
         }
+        
         if (profile) {
             state.profileCache[userId] = profile;
         }
@@ -1174,17 +1177,21 @@ export function initHRNchat(customConfig = {}) {
         };
         window.addEventListener('online', onlineHandler);
         window.addEventListener('offline', offlineHandler);
-        document.addEventListener('visibilitychange', () => {
+        document.addEventListener('visibilitychange', async () => {
             if (state.isCapacityBlocked) return;
             if (document.visibilityState === 'hidden') {
                 if (state.backgroundDisconnectTimer) clearTimeout(state.backgroundDisconnectTimer);
-                state.backgroundDisconnectTimer = setTimeout(() => {
+                state.backgroundDisconnectTimer = setTimeout(async () => {
                     if (!state.isOfflineMode && !state.isCapacityBlocked) {
-                        cleanupChannels(false);
+                        await cleanupChannels(false);
                         state.isBackgroundDisconnectActive = true;
                         try {
-                            db.realtime.disconnect();
-                        } catch (e) {}
+                            if (db.realtime && typeof db.realtime.disconnect === 'function') {
+                                db.realtime.disconnect();
+                            }
+                        } catch (e) {
+                            console.error("WS Disconnect Error", e);
+                        }
                     }
                 }, CONFIG.backgroundDisconnectMs);
             } else if (document.visibilityState === 'visible') {
@@ -1194,8 +1201,12 @@ export function initHRNchat(customConfig = {}) {
                     state.isBackgroundDisconnectActive = false;
                     if (state.user && !state.isOfflineMode) {
                         try {
-                            db.realtime.connect();
-                        } catch (e) {}
+                            if (db.realtime && typeof db.realtime.connect === 'function') {
+                                db.realtime.connect();
+                            }
+                        } catch (e) {
+                            console.error("WS Connect Error", e);
+                        }
                         setupGlobalPresence(state.user.id);
                         if (state.currentRoomId) attemptHardReconnect();
                     }
