@@ -353,83 +353,44 @@ export function initHRNchat(customConfig = {}) {
         catch (error) { return [null, error]; }
     };
 
-    const processImageToCache = async (url) => {
-        if (!url || url.startsWith('data:')) return url;
-        try {
-            const response = await fetch(CONFIG.proxyUrl + url);
-            if (!response.ok) throw new Error("Invalid image response");
-            const blob = await response.blob();
-            return new Promise((resolve) => {
-                const img = new Image();
-                const blobUrl = URL.createObjectURL(blob);
-                img.onload = async () => {
-                    URL.revokeObjectURL(blobUrl);
-                    const canvas = document.createElement('canvas');
-                    const size = 200; canvas.width = size; canvas.height = size;
-                    const ctx = canvas.getContext('2d');
-                    const scale = Math.max(size / img.width, size / img.height);
-                    const x = (size - img.width * scale) / 2;
-                    const y = (size - img.height * scale) / 2;
-                    ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
-                    resolve(canvas.toDataURL('image/jpeg', 0.85));
-                };
-                img.onerror = () => { URL.revokeObjectURL(blobUrl); resolve(null); };
-                img.src = blobUrl;
-            });
-        } catch (e) { return null; }
-    };
+    // Removed processImageToCache as per request to use direct URLs
 
     const cacheAvatar = async (profile) => {
-        if (!profile || !profile.avatar_url) return profile;
-        if (profile.avatar_url.startsWith('data:')) { profile.cached_avatar = profile.avatar_url; return profile; }
-        if (profile.cached_avatar && profile.cached_avatar.startsWith('data:')) return profile;
-        
-        const dataUrl = await processImageToCache(profile.avatar_url);
-        if (dataUrl) {
-            profile.cached_avatar = dataUrl;
-            await localDB.put('profiles', profile);
-            state.profileCache[profile.id] = profile;
-        }
+        if (!profile) return profile;
+        // Save metadata locally, do not process image to Base64
+        await localDB.put('profiles', profile);
+        state.profileCache[profile.id] = profile;
         return profile;
     };
 
     const cacheRoomImage = async (room) => {
-        if (!room || !room.avatar_url || room.avatar_url.startsWith('data:')) return room;
-        if (room.cached_avatar) return room;
-        const dataUrl = await processImageToCache(room.avatar_url);
-        if (dataUrl) {
-            room.cached_avatar = dataUrl;
-            const dbRoom = await localDB.get('rooms', room.id);
-            if (dbRoom) { dbRoom.cached_avatar = dataUrl; await localDB.put('rooms', dbRoom); }
-            state.roomImageCache[room.id] = dataUrl;
-            if (state.currentRoomId === room.id) {
-                const avEl = $('chat-avatar-display');
-                if (avEl) avEl.innerHTML = `<img src="${dataUrl}">`;
-            }
+        if (!room) return room;
+        // Save metadata locally
+        const dbRoom = await localDB.get('rooms', room.id);
+        // If we want to ensure the latest metadata is saved locally per account:
+        if (dbRoom) { 
+            // Merge potentially new data
+            const updatedRoom = { ...dbRoom, ...room };
+            await localDB.put('rooms', updatedRoom); 
+        } else {
+            await localDB.put('rooms', room);
         }
         return room;
     };
 
     const warmUpAvatarCache = async () => {
+        // No longer needed to convert images, just ensuring profiles are in state cache
         if (state.isOfflineMode) return;
         const profiles = await localDB.getAll('profiles');
         if (!profiles || profiles.length === 0) return;
-        const promises = profiles.map(async (p) => {
-            if (p.avatar_url && !p.avatar_url.startsWith('data:') && !p.cached_avatar) return cacheAvatar(p);
-            return Promise.resolve();
+        profiles.forEach(p => {
+            if (p && p.id) state.profileCache[p.id] = p;
         });
-        await Promise.all(promises);
     };
 
     const warmUpRoomImageCache = async () => {
-        if (state.isOfflineMode) return;
-        const rooms = await localDB.getAll('rooms');
-        if (!rooms || rooms.length === 0) return;
-        const promises = rooms.map(async (r) => {
-            if (r.avatar_url && !r.avatar_url.startsWith('data:') && !r.cached_avatar) return cacheRoomImage(r);
-            return Promise.resolve();
-        });
-        await Promise.all(promises);
+        // No longer needed to convert images
+        return;
     };
 
     const getProfiles = async (userIds) => {
@@ -446,7 +407,7 @@ export function initHRNchat(customConfig = {}) {
                 if (profiles) {
                     await Promise.all(profiles.map(p => {
                         state.profileCache[p.id] = p;
-                        return cacheAvatar(p);
+                        return cacheAvatar(p); // Saves to localDB
                     }));
                 }
             } catch (e) { console.warn("Batch profile fetch failed", e); }
@@ -457,7 +418,7 @@ export function initHRNchat(customConfig = {}) {
 
     const getProfile = async (userId) => {
         if (!userId) return null;
-        if (state.profileCache[userId] && state.profileCache[userId].cached_avatar) return state.profileCache[userId];
+        if (state.profileCache[userId]) return state.profileCache[userId];
         
         let profile = await localDB.get('profiles', userId);
         
@@ -469,17 +430,9 @@ export function initHRNchat(customConfig = {}) {
                     const serverTime = serverProfile.updated_at ? new Date(serverProfile.updated_at).getTime() : 0;
                     const needsUpdate = !profile || serverTime > localTime || !profile.full_name;
                     
-                    let profileToSave = profile || serverProfile;
                     if (needsUpdate) {
-                        profileToSave = { ...serverProfile };
-                    }
-
-                    if (profileToSave.avatar_url && !profileToSave.cached_avatar) {
-                         profileToSave = await cacheAvatar(profileToSave);
-                         profile = profileToSave;
-                    } else {
-                         if (needsUpdate) await localDB.put('profiles', profileToSave);
-                         profile = profileToSave;
+                        profile = serverProfile;
+                        await cacheAvatar(profile);
                     }
                 }
             } catch (e) {
@@ -496,8 +449,8 @@ export function initHRNchat(customConfig = {}) {
     const resolveRoomDisplay = async (room) => {
         if (!room) return { name: 'Chat', avatar: null };
         if (!room.is_direct) {
-            let avatar = room.cached_avatar || (room.avatar_url && room.avatar_url.startsWith('data:') ? room.avatar_url : null);
-            if (!avatar && room.avatar_url && !state.isOfflineMode) cacheRoomImage(room);
+            // Just use the avatar_url directly
+            let avatar = room.avatar_url || null;
             return { name: room.name, avatar: avatar };
         }
         const myId = state.user?.id;
@@ -508,7 +461,8 @@ export function initHRNchat(customConfig = {}) {
         if (!otherId) return { name: 'Direct Message', avatar: null };
         const profile = await getProfile(otherId);
         if (!profile) return { name: 'Unknown User', avatar: null };
-        const avatar = profile.cached_avatar || (!state.isOfflineMode ? profile.avatar_url : null);
+        // Use avatar_url directly
+        const avatar = profile.avatar_url || null;
         return { name: profile.full_name || 'User', avatar: avatar };
     };
 
@@ -1313,7 +1267,7 @@ export function initHRNchat(customConfig = {}) {
         if (!state.user) return;
         const { data: profile } = await db.from('profiles').select('avatar_url, full_name').eq('id', state.user.id).single();
         const name = profile?.full_name || state.user.user_metadata?.full_name || "User";
-        const avatar = profile?.cached_avatar || profile?.avatar_url || state.user.user_metadata?.avatar_url;
+        const avatar = profile?.avatar_url || state.user.user_metadata?.avatar_url;
         $('acc-page-name').innerText = name;
         $('acc-page-type').innerText = "Full Account";
         $('acc-page-id').innerText = state.user.id;
@@ -1335,10 +1289,10 @@ export function initHRNchat(customConfig = {}) {
         let name = state.user.user_metadata?.full_name;
         if (!avatar || !name) {
             const { data } = await db.from('profiles').select('avatar_url, full_name').eq('id', state.user.id).single();
-            if (data) { avatar = data.cached_avatar || data.avatar_url; name = data.full_name; }
+            if (data) { avatar = data.avatar_url; name = data.full_name; }
         }
         const profile = await getProfile(state.user.id);
-        if (profile && profile.cached_avatar) avatar = profile.cached_avatar;
+        if (profile && profile.avatar_url) avatar = profile.avatar_url;
         if (avatar) btn.innerHTML = `<img src="${avatar}">`;
         else btn.innerText = (name || "U").charAt(0);
     };
@@ -1830,9 +1784,9 @@ export function initHRNchat(customConfig = {}) {
         } else {
             n = $('c-name').value.trim();
             const inputUrl = $('c-avatar').value.trim();
+            // Just use the URL directly, no conversion
             if (inputUrl) {
-                window.setLoading(true, "Processing image...");
-                avatarUrl = await processImageToCache(inputUrl);
+                avatarUrl = inputUrl;
             } else avatarUrl = null;
             rawPass = $('c-pass').value;
             isVisible = $('c-visible').checked;
@@ -1897,7 +1851,7 @@ export function initHRNchat(customConfig = {}) {
     };
 
     window.copySId = () => { if (!state.lastCreated) return; navigator.clipboard.writeText(state.lastCreated.id); window.toast("ID copied."); };
-    const processAvatarUrl = async (url) => { if (!url || url.startsWith('data:')) return url; return await processImageToCache(url); };
+    const processAvatarUrl = async (url) => { if (!url || url.startsWith('data:')) return url; return url; }; // No conversion
     window.enterCreated = () => { if (!state.lastCreated) return; window.openVault(state.lastCreated.id, state.lastCreated.name, state.lastCreatedPass, state.lastCreated.salt, state.lastCreated); state.lastCreatedPass = null; };
 
     const { data: { subscription } } = db.auth.onAuthStateChange(async (ev, ses) => {
@@ -1987,7 +1941,7 @@ export function initHRNchat(customConfig = {}) {
                 if (rooms.length > 0) await localDB.putAll('rooms', rooms);
                 await localDB.saveUserTree(uid, rooms);
                 await processAndRender(rooms);
-                warmUpRoomImageCache();
+                warmUpRoomImageCache(); // Still calling it, but it does nothing heavy now
             }
         } catch (e) { window.toast("Sync failed."); }
         window.setLoading(false);
@@ -2066,7 +2020,8 @@ export function initHRNchat(customConfig = {}) {
     const init = async () => {
         await localDB.init();
         monitorConnection();
-        if (navigator.onLine) { await warmUpAvatarCache(); await warmUpRoomImageCache(); }
+        // No need to warm up image cache with processing, just load state cache
+        if (navigator.onLine) { await warmUpAvatarCache(); }
         const storedEmail = localStorage.getItem('hrn_auth_email');
         const storedPass = localStorage.getItem('hrn_auth_pass');
         if (navigator.onLine) {
