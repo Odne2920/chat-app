@@ -569,7 +569,7 @@ export function initHRNchat(customConfig = {}) {
     const handleServerFull = async () => {
         if (state.isCapacityBlocked) return;
         state.isCapacityBlocked = true;
-        await fullDisconnect(); // Use full disconnect
+        await fullDisconnect(); 
         const overlay = $('block-overlay');
         if (overlay) {
             overlay.innerHTML = `
@@ -730,6 +730,7 @@ export function initHRNchat(customConfig = {}) {
         state.isCapacityBlocked = false;
         const overlay = $('block-overlay');
         if (overlay) overlay.classList.remove('active');
+        
         if (state.user) {
             const storedEmail = localStorage.getItem('hrn_auth_email');
             const storedPass = localStorage.getItem('hrn_auth_pass');
@@ -769,7 +770,7 @@ export function initHRNchat(customConfig = {}) {
     window.stayOffline = async () => {
         const overlay = $('block-overlay');
         if (overlay) overlay.classList.remove('active');
-        await fullDisconnect(); // Ensure WS is closed
+        await fullDisconnect(); 
         setAppMode(true);
         window.toast("Offline mode active.");
         if (state.user) window.loadRooms();
@@ -895,11 +896,13 @@ export function initHRNchat(customConfig = {}) {
             if (state.isOfflineMode) window.goOnline();
             else { setConnectionVisuals('connecting'); if (state.currentRoomId) attemptHardReconnect(); else setConnectionVisuals('connected'); }
         };
-        const offlineHandler = () => {
+        const offlineHandler = async () => {
             setAppMode(true);
             if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
             if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
             state.isReconnecting = false;
+            state.globalPresenceReady = false; 
+            try { await fullDisconnect(); } catch(e) { console.warn("Disconnect error", e); }
             startInternetCheck();
         };
         window.addEventListener('online', onlineHandler);
@@ -912,7 +915,7 @@ export function initHRNchat(customConfig = {}) {
                 if (state.backgroundDisconnectTimer) clearTimeout(state.backgroundDisconnectTimer);
                 state.backgroundDisconnectTimer = setTimeout(async () => {
                     if (!state.isOfflineMode && !state.isCapacityBlocked) {
-                        await fullDisconnect(); // Use full disconnect
+                        await fullDisconnect(); 
                         state.isBackgroundDisconnectActive = true;
                     }
                 }, CONFIG.backgroundDisconnectMs);
@@ -1535,7 +1538,6 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(true, "Opening chat...");
         state.currentRoomPassword = rawPassword;
         
-        // Strict cleanup of previous room channels before starting new ones
         await cleanupChannels(true); 
 
         state.currentRoomId = id;
@@ -1658,7 +1660,7 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(true, "Leaving...");
         state.currentRoomId = null;
         state.currentRoomData = null;
-        await cleanupChannels(true); // Clean room channels, keep global
+        await cleanupChannels(true); 
         setConnectionVisuals('offline');
         if ($('info-edit-btn')) $('info-edit-btn').style.display = 'none';
         window.nav('scr-lobby');
@@ -1847,7 +1849,7 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(true, "Leaving...");
         state.currentRoomId = null;
         state.user = null;
-        await fullDisconnect(); // Close WS completely
+        await fullDisconnect(); 
         localStorage.removeItem('hrn_auth_email');
         localStorage.removeItem('hrn_auth_pass');
         setAppMode(false);
