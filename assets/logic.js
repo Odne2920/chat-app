@@ -457,22 +457,20 @@ export function initHRNchat(customConfig = {}) {
         if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
         state.reconnectTimer = null;
         
-        // Fire and forget unsubscriptions to avoid hanging on offline
         if (state.presenceChannel) { try { state.presenceChannel.unsubscribe(); } catch (e) {} state.presenceChannel = null; state.isPresenceSubscribed = false; }
         if (state.chatChannel) { try { state.chatChannel.unsubscribe(); } catch (e) {} state.chatChannel = null; }
         if (!keepGlobal && state.globalPresenceChannel) { try { state.globalPresenceChannel.unsubscribe(); } catch (e) {} state.globalPresenceChannel = null; state.globalPresenceReady = false; }
         state.isChatChannelReady = false;
+        updateSendButtonState(); // Immediate UI update
     };
 
     const fullDisconnect = async () => {
         await cleanupChannels(false);
-        // Do NOT call db.realtime.disconnect() here. Let the browser handle socket close or use connect() to revive.
     };
 
     const queryOnlineCountImmediately = async () => {
         if (!state.presenceChannel) return;
         const presState = state.presenceChannel.presenceState();
-        // FIX: Deduplicate by user_id to prevent ghost users
         const uniqueUserIds = new Set(Object.values(presState).flat().map(p => p.user_id));
         state.lastKnownOnlineCount = uniqueUserIds.size;
         schedulePresenceUpdate();
@@ -491,18 +489,14 @@ export function initHRNchat(customConfig = {}) {
         state.globalPresenceChannel.on('presence', { event: 'sync' }, async () => {
             if (!state.globalPresenceChannel) return;
             const presState = state.globalPresenceChannel.presenceState();
-            
-            // FIX: Deduplicate user IDs to fix Ghost User count
             const uniqueUserIds = new Set();
             Object.values(presState).flat().forEach(p => uniqueUserIds.add(p.user_id));
             state.globalOnlineCount = uniqueUserIds.size;
-            
             state.globalPresenceReady = true;
             schedulePresenceUpdate();
-            
             if (state.user && !state.isOfflineMode && !state.isCapacityBlocked) {
                 if (state.globalOnlineCount > CONFIG.maxUsers) {
-                    if (!uniqueUserIds.has(state.user.id)) handleServerFull(); // If I am not in the set, I am the +1 overflow
+                    if (!uniqueUserIds.has(state.user.id)) handleServerFull();
                 }
             }
         }).subscribe(async (status) => {
@@ -552,7 +546,6 @@ export function initHRNchat(customConfig = {}) {
             attemptHardReconnect();
         }, timeout);
         
-        // Ensure socket is connected before subscribing
         try { if (db.realtime && typeof db.realtime.connect === 'function') db.realtime.connect(); } catch (e) {}
         
         initRoomPresence(state.currentRoomId);
@@ -579,7 +572,6 @@ export function initHRNchat(customConfig = {}) {
         stopInternetCheck(); state.isCapacityBlocked = false;
         const overlay = $('block-overlay'); if (overlay) overlay.classList.remove('active');
         
-        // FIX: Explicitly connect the socket if it was disconnected
         try { if (db.realtime && typeof db.realtime.connect === 'function') db.realtime.connect(); } catch (e) {}
 
         if (state.user) {
@@ -661,7 +653,9 @@ export function initHRNchat(customConfig = {}) {
                 } catch (e) {}
             }
         }).subscribe((status) => {
+            const wasReady = state.isChatChannelReady;
             state.isChatChannelReady = (status === 'SUBSCRIBED');
+            
             if (status === 'SUBSCRIBED') {
                 if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
                 state.connectionTimeoutTimer = null; state.isHardReconnecting = false;
@@ -676,6 +670,9 @@ export function initHRNchat(customConfig = {}) {
                     if (!state.isHardReconnecting) { state.isHardReconnecting = true; setConnectionVisuals('connecting'); state.reconnectTimer = setTimeout(attemptHardReconnect, 2000); }
                 }
             }
+            
+            // Waterproof: Ensure UI updates if state changed
+            if (wasReady !== state.isChatChannelReady) updateSendButtonState();
         });
     };
 
@@ -714,7 +711,6 @@ export function initHRNchat(customConfig = {}) {
             if (state.isOfflineMode) window.goOnline(); 
             else { 
                 setConnectionVisuals('connecting'); 
-                // FIX: Force reconnect socket on online event
                 try { if (db.realtime && typeof db.realtime.connect === 'function') db.realtime.connect(); } catch (e) {}
                 if (state.currentRoomId) attemptHardReconnect(); 
                 else setConnectionVisuals('connected'); 
@@ -722,14 +718,11 @@ export function initHRNchat(customConfig = {}) {
         };
         const offlineHandler = async () => {
             setAppMode(true);
-            // FIX: Instant disconnect visuals and stop timers. Don't wait for network ops.
             if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
             if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
             state.isHardReconnecting = false;
             state.isConnecting = false;
             state.globalPresenceReady = false;
-            // Don't need to call disconnect explicitly, the browser handles the socket drop. 
-            // Just cleanup local state.
             cleanupChannels(false); 
             startInternetCheck();
         };
@@ -1038,7 +1031,14 @@ export function initHRNchat(customConfig = {}) {
     window.openVault = async (id, n, rawPassword, roomSalt, cachedData = null) => {
         if (!state.user) return window.toast("Please log in."); if (state.isCapacityBlocked) return;
         window.setLoading(true, "Opening chat..."); state.currentRoomPassword = rawPassword;
+        
         await cleanupChannels(true);
+        
+        // Force socket open when opening a room
+        if (!state.isOfflineMode) {
+            try { if (db.realtime && typeof db.realtime.connect === 'function') db.realtime.connect(); } catch (e) {}
+        }
+
         state.currentRoomId = id; state.lastRenderedDateLabel = null; state.oldestMessageTimestamp = null; state.hasMoreHistory = true; state.isLoadingHistory = false;
         const chatContainer = $('chat-messages'); chatContainer.innerHTML = ''; chatContainer.onscroll = handleScroll;
         let roomData = null;
