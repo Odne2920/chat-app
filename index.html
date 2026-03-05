@@ -1,2099 +1,417 @@
+
 <!DOCTYPE html>
 <html lang="en">
-<head>
-   <meta charset="UTF-8">
-   <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
-   <link rel="icon" href="./assets/branding/favicon/favicon-black.png" media="(prefers-color-scheme: light)">
-   <link rel="icon" href="./assets/branding/favicon/favicon-white.png" media="(prefers-color-scheme: dark)">
-   <link rel="manifest" href="./assets/manifest.json">
-   <meta name="theme-color" content="#ffffff">
-   <title>HyperRush Chat</title>
-   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-   <style>
-      :root {
-         --bg: #fff;
-         --surface: #fff;
-         --border: #e5e5ea;
-         --text-main: #1c1c1e;
-         --text-mute: #8e8e93;
-         --accent: #262626;
-         --danger: #ff3b30;
-         --success: #34c759;
-         --warning: #ff9500;
-         --radius: 14px;
-      }
-
-      * {
-         margin: 0;
-         padding: 0;
-         box-sizing: border-box;
-         font-family: Plus Jakarta Sans, sans-serif;
-         -webkit-tap-highlight-color: transparent;
-         -webkit-user-select: none;
-         user-select: none;
-      }
-
-      input, textarea {
-         -webkit-user-select: text;
-         user-select: text;
-      }
-
-      ::-webkit-scrollbar {
-         width: 0;
-         height: 0;
-      }
-
-      body {
-         height: 100dvh;
-         background: #f2f2f7;
-         color: var(--text-main);
-         display: flex;
-         justify-content: center;
-         align-items: center;
-      }
-
-      #app {
-         display: flex;
-         width: 100%;
-         max-width: 440px;
-         height: 100%;
-         position: relative;
-         box-shadow: 0 0 60px rgba(0, 0, 0, 0.05);
-         overflow: hidden;
-         flex-direction: column;
-         background: var(--bg);
-      }
-
-      .screen {
-         display: none;
-         padding: 20px;
-         position: absolute;
-         inset: 0;
-         flex-direction: column;
-         background: var(--bg);
-         will-change: transform, opacity;
-         transition: transform 0.4s cubic-bezier(0.19, 1, 0.22, 1), opacity 0.3s ease;
-      }
-
-      .screen.active {
-         display: flex;
-         animation: instantFade 0.2s ease-out;
-      }
-
-      .screen.slide-left {
-         transform: translateX(-100%);
-         opacity: 0;
-      }
-
-      .screen.slide-right {
-         transform: translateX(100%);
-         opacity: 0;
-      }
-
-      @keyframes instantFade {
-         0% { opacity: 0; }
-         100% { opacity: 1; }
-      }
-
-      /* Layout Utilities */
-      .center-content {
-         justify-content: center;
-         align-items: center;
-         text-align: center;
-      }
-
-      .flex-col { flex-direction: column; }
-      .flex-row { flex-direction: row; }
-      .flex-1 { flex: 1; }
-      .flex-shrink-0 { flex-shrink: 0; }
-      .flex-grow-0 { flex-grow: 0; }
-      .gap-2 { gap: 2px; }
-      .gap-4 { gap: 4px; }
-      .gap-6 { gap: 6px; }
-      .gap-8 { gap: 8px; }
-      .gap-10 { gap: 10px; }
-      .gap-12 { gap: 12px; }
-      .gap-14 { gap: 14px; }
-      .gap-16 { gap: 16px; }
-      .items-center { align-items: center; }
-      .items-start { align-items: flex-start; }
-      .items-end { align-items: flex-end; }
-      .justify-center { justify-content: center; }
-      .justify-between { justify-content: space-between; }
-      .justify-end { justify-content: flex-end; }
-      .wrap { flex-wrap: wrap; }
-
-      /* Typography */
-      .title {
-         font-size: 28px;
-         letter-spacing: -1px;
-         color: #000;
-         font-weight: 800;
-         margin-bottom: 4px;
-      }
-
-      .title-lg {
-         font-size: 18px;
-         font-weight: 800;
-         color: #000;
-         margin: 0;
-      }
-
-      .title-md {
-         font-size: 16px;
-         font-weight: 800;
-         color: var(--text-main);
-         margin: 0;
-      }
-
-      .subtitle {
-         text-transform: uppercase;
-         color: var(--text-mute);
-         font-size: 11px;
-         font-weight: 700;
-         letter-spacing: 1px;
-         margin-bottom: 24px;
-         display: block;
-      }
-
-      .text-center { text-align: center; }
-      .text-left { text-align: left; }
-      .text-right { text-align: right; }
-
-      .fs-9 { font-size: 9px; }
-      .fs-10 { font-size: 10px; }
-      .fs-11 { font-size: 11px; }
-      .fs-12 { font-size: 12px; }
-      .fs-13 { font-size: 13px; }
-      .fs-14 { font-size: 14px; }
-      .fs-16 { font-size: 16px; }
-      .fs-18 { font-size: 18px; }
-      .fs-22 { font-size: 22px; }
-
-      .fw-500 { font-weight: 500; }
-      .fw-600 { font-weight: 600; }
-      .fw-700 { font-weight: 700; }
-      .fw-800 { font-weight: 800; }
-
-      .uppercase { text-transform: uppercase; }
-      .tracking-wide { letter-spacing: 0.5px; }
-      .tracking-wider { letter-spacing: 1px; }
-      .mono { font-family: monospace; }
-
-      /* Colors */
-      .c-main { color: var(--text-main); }
-      .c-mute { color: var(--text-mute); }
-      .c-accent { color: var(--accent); }
-      .c-danger { color: var(--danger); }
-      .c-warning { color: var(--warning); }
-      .c-success { color: var(--success); }
-      .c-white { color: #fff; }
-
-      /* Spacing */
-      .m-0 { margin: 0; }
-      .mt-2 { margin-top: 2px; }
-      .mt-4 { margin-top: 4px; }
-      .mt-6 { margin-top: 6px; }
-      .mt-8 { margin-top: 8px; }
-      .mt-12 { margin-top: 12px; }
-      .mt-16 { margin-top: 16px; }
-      .mt-20 { margin-top: 20px; }
-      .mt-24 { margin-top: 24px; }
-      .mt-auto { margin-top: auto; }
-      .mb-2 { margin-bottom: 2px; }
-      .mb-4 { margin-bottom: 4px; }
-      .mb-6 { margin-bottom: 6px; }
-      .mb-8 { margin-bottom: 8px; }
-      .mb-12 { margin-bottom: 12px; }
-      .mb-14 { margin-bottom: 14px; }
-      .mb-16 { margin-bottom: 16px; }
-      .mb-20 { margin-bottom: 20px; }
-      .mb-24 { margin-bottom: 24px; }
-      .mb-48 { margin-bottom: 48px; }
-      .mx-auto { margin-left: auto; margin-right: auto; }
-
-      .p-0 { padding: 0; }
-      .p-2 { padding: 2px; }
-      .p-4 { padding: 4px; }
-      .p-6 { padding: 6px; }
-      .p-8 { padding: 8px; }
-      .p-10 { padding: 10px; }
-      .p-12 { padding: 12px; }
-      .p-14 { padding: 14px; }
-      .p-16 { padding: 16px; }
-      .p-18 { padding: 18px; }
-      .p-20 { padding: 20px; }
-      .px-6 { padding-left: 6px; padding-right: 6px; }
-      .px-12 { padding-left: 12px; padding-right: 12px; }
-      .px-14 { padding-left: 14px; padding-right: 14px; }
-      .py-2 { padding-top: 2px; padding-bottom: 2px; }
-      .py-4 { padding-top: 4px; padding-bottom: 4px; }
-      .pt-12 { padding-top: 12px; }
-      .pt-16 { padding-top: 16px; }
-      .pt-20 { padding-top: 20px; }
-      .pb-10 { padding-bottom: 10px; }
-
-      /* Width & Height */
-      .w-full { width: 100%; }
-      .w-auto { width: auto; }
-      .w-20 { width: 20px; }
-      .w-24 { width: 24px; }
-      .w-32 { width: 32px; }
-      .w-36 { width: 36px; }
-      .w-40 { width: 40px; }
-      .w-44 { width: 44px; }
-      .w-48 { width: 48px; }
-      .w-50 { width: 50px; }
-      .w-80 { width: 80px; }
-      .w-90 { width: 90px; }
-      .w-100 { width: 100px; }
-
-      .h-20 { height: 20px; }
-      .h-24 { height: 24px; }
-      .h-32 { height: 32px; }
-      .h-36 { height: 36px; }
-      .h-40 { height: 40px; }
-      .h-44 { height: 44px; }
-      .h-48 { height: 48px; }
-      .h-50 { height: 50px; }
-      .h-80 { height: 80px; }
-      .h-90 { height: 90px; }
-      .h-100 { height: 100px; }
-      .h-120 { height: 120px; }
-      .h-full { height: 100%; }
-
-      .min-w-0 { min-width: 0; }
-      .min-h-50 { min-height: 50px; }
-      .max-h-80vh { max-height: 80vh; }
-      .max-w-340 { max-width: 340px; }
-      .max-w-60 { max-width: 60%; }
-      .max-w-120 { max-width: 120px; }
-
-      /* Border & Radius */
-      .border-none { border: none; }
-      .border { border: 1px solid var(--border); }
-      .border-accent { border: 1px solid var(--accent); }
-      .border-dashed { border-style: dashed; }
-      .border-dotted { border-style: dotted; }
-      .border-transparent { border-color: transparent; }
-      .border-b { border-bottom: 1px solid var(--border); }
-      .border-t { border-top: 1px solid var(--border); }
-      .border-2 { border-width: 2px; }
-
-      .rounded { border-radius: var(--radius); }
-      .rounded-sm { border-radius: 8px; }
-      .rounded-lg { border-radius: 16px; }
-      .rounded-xl { border-radius: 20px; }
-      .rounded-full { border-radius: 50%; }
-      .rounded-99 { border-radius: 99px; }
-
-      /* Background */
-      .bg-transparent { background: transparent; }
-      .bg-surface { background: var(--bg); }
-      .bg-muted { background: #f2f2f7; }
-      .bg-accent { background: var(--accent); }
-      .bg-danger { background: var(--danger); }
-      .bg-danger-soft { background: rgba(255, 59, 48, 0.1); }
-      .bg-accent-soft { background: rgba(0, 122, 255, 0.03); }
-      .bg-overlay { background: rgba(0, 0, 0, 0.05); }
-      .bg-backdrop { background: rgba(0, 0, 0, 0.4); }
-      .bg-white { background: #fff; }
-      .bg-white-98 { background: hsla(0, 0%, 100%, 0.98); }
-
-      /* Display */
-      .hidden { display: none; }
-      .block { display: block; }
-      .flex { display: flex; }
-      .inline-flex { display: inline-flex; }
-      .inline-block { display: inline-block; }
-
-      /* Position */
-      .relative { position: relative; }
-      .absolute { position: absolute; }
-      .fixed { position: fixed; }
-      .sticky { position: sticky; }
-      .inset-0 { inset: 0; }
-      .top-0 { top: 0; }
-
-      /* Overflow */
-      .overflow-hidden { overflow: hidden; }
-      .overflow-auto { overflow: auto; }
-      .overflow-y-auto { overflow-y: auto; }
-
-      /* Cursor */
-      .cursor-pointer { cursor: pointer; }
-      .cursor-not-allowed { cursor: not-allowed; }
-
-      /* Opacity */
-      .opacity-0 { opacity: 0; }
-      .opacity-50 { opacity: 0.5; }
-      .opacity-60 { opacity: 0.6; }
-      .opacity-70 { opacity: 0.7; }
-      .opacity-80 { opacity: 0.8; }
-
-      /* Transitions */
-      .transition { transition: all 0.15s ease; }
-      .transition-fast { transition: all 0.2s ease; }
-      .transition-slow { transition: all 0.3s ease; }
-
-      /* Z-Index */
-      .z-10 { z-index: 10; }
-      .z-5000 { z-index: 5000; }
-      .z-6000 { z-index: 6000; }
-
-      /* Other */
-      .whitespace-nowrap { white-space: nowrap; }
-      .overflow-ellipsis { text-overflow: ellipsis; }
-      .word-break { word-break: break-word; }
-      .resize-none { resize: none; }
-      .pointer-events-none { pointer-events: none; }
-      .pointer-events-auto { pointer-events: auto; }
-      .will-change { will-change: transform, opacity; }
-
-      /* Components */
-      .header {
-         display: flex;
-         align-items: center;
-         justify-content: space-between;
-         gap: 12px;
-         padding: 0 0 16px;
-         border-bottom: 1px solid var(--border);
-         margin-bottom: 16px;
-         flex-shrink: 0;
-      }
-
-      .input-field {
-         color: var(--text-main);
-         width: 100%;
-         background: #f2f2f7;
-         border: 1px solid transparent;
-         border-radius: var(--radius);
-         padding: 14px;
-         font-size: 15px;
-         outline: none;
-         margin-bottom: 10px;
-         transition: 0.2s;
-      }
-
-      .input-field:focus {
-         border-color: var(--accent);
-         background: #fff;
-      }
-
-      .input-field-no-margin {
-         margin-bottom: 0;
-      }
-
-      .btn {
-         color: var(--text-main);
-         width: 100%;
-         height: 50px;
-         border-radius: var(--radius);
-         border: 1px solid var(--border);
-         background: transparent;
-         font-weight: 700;
-         font-size: 14px;
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         gap: 8px;
-         transition: 0.15s;
-         cursor: pointer;
-         padding: 0 20px;
-      }
-
-      .btn-accent {
-         background: var(--accent);
-         color: #fff;
-         border: none;
-      }
-
-      .btn-danger {
-         background: rgba(255, 59, 48, 0.1);
-         color: var(--danger);
-         border: none;
-      }
-
-      .btn-danger:hover {
-         background: rgba(255, 59, 48, 0.15);
-      }
-
-      .btn-danger.active {
-         background: var(--danger);
-         color: #fff;
-      }
-
-      .btn-outline {
-         background: transparent;
-         color: var(--accent);
-         border: 1px solid var(--border);
-      }
-
-      .btn:active {
-         transform: scale(0.98);
-         opacity: 0.8;
-      }
-
-      .btn:disabled {
-         opacity: 0.5;
-         cursor: not-allowed;
-         transform: none;
-      }
-
-      #toast-container {
-         position: absolute;
-         top: 30px;
-         left: 50%;
-         transform: translateX(-50%);
-         z-index: 999999;
-         width: 85%;
-         pointer-events: none;
-         display: flex;
-         flex-direction: column;
-         align-items: center;
-      }
-
-      .toast-item {
-         background: #fff;
-         color: var(--text-main);
-         padding: 12px 18px;
-         border-radius: 40px;
-         font-weight: 600;
-         font-size: 12px;
-         text-align: center;
-         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-         animation: slideUp 0.3s cubic-bezier(0.2, 1, 0.3, 1);
-         pointer-events: auto;
-         cursor: pointer;
-         width: 100%;
-         margin-bottom: 8px;
-         border: 1px solid var(--text-mute);
-      }
-
-      @keyframes slideUp {
-         0% { transform: translateY(20px); opacity: 0; }
-         100% { transform: translateY(0); opacity: 1; }
-      }
-
-      #block-overlay {
-         position: absolute;
-         inset: 0;
-         background: var(--bg);
-         z-index: 6000;
-         display: none;
-         flex-direction: column;
-         align-items: center;
-         justify-content: center;
-         padding: 20px;
-         text-align: center;
-      }
-
-      #block-overlay.active {
-         display: flex;
-      }
-
-      #loader-overlay {
-         position: absolute;
-         inset: 0;
-         background: hsla(0, 0%, 100%, 0.98);
-         z-index: 3500;
-         display: none;
-         align-items: center;
-         justify-content: center;
-         flex-direction: column;
-         gap: 12px;
-         opacity: 0;
-      }
-
-      #loader-overlay.active {
-         display: flex;
-         opacity: 1;
-      }
-
-      .spinner {
-         width: 20px;
-         height: 20px;
-         border: 2px solid var(--border);
-         border-top-color: var(--accent);
-         border-radius: 50%;
-         animation: spin 0.5s linear infinite;
-      }
-
-      @keyframes spin {
-         100% { transform: rotate(360deg); }
-      }
-
-      .loader-text {
-         font-size: 11px;
-         font-weight: 700;
-         margin-top: 6px;
-         color: var(--text-mute);
-      }
-
-      .room-card {
-         padding: 14px;
-         border-radius: var(--radius);
-         background: #fff;
-         display: flex;
-         align-items: center;
-         justify-content: space-between;
-         border: 1px solid var(--border);
-         margin-bottom: 8px;
-         width: 100%;
-         transition: 0.15s;
-         cursor: pointer;
-      }
-
-      .room-card:active {
-         transform: scale(0.99);
-         background: #f9f9f9;
-      }
-
-      .room-name {
-         flex: 1;
-         min-width: 0;
-         font-weight: 700;
-         font-size: 14px;
-         margin-right: 8px;
-         white-space: nowrap;
-         overflow: hidden;
-         text-overflow: ellipsis;
-      }
-
-      .room-icon {
-         flex-shrink: 0;
-         color: var(--text-mute);
-      }
-
-      #chat-messages {
-         flex: 1;
-         display: flex;
-         flex-direction: column;
-         overflow-y: auto;
-         background: var(--bg);
-         padding-bottom: 10px;
-         position: relative;
-      }
-
-      .date-divider {
-         position: sticky;
-         top: 0;
-         z-index: 10;
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         margin: 16px auto 4px;
-         width: 25%;
-         padding: 2px 6px;
-         background: #fff;
-         border: 1px solid #ddd;
-         border-radius: 999px;
-         text-align: center;
-         color: #333;
-         box-sizing: border-box;
-         font-size: 0.875rem;
-      }
-
-      .date-label {
-         font-weight: 700;
-         text-transform: uppercase;
-         letter-spacing: 0.5px;
-         margin: 0 auto;
-         background: var(--bg);
-         padding: 4px 0;
-         font-size: 9px;
-         text-align: center;
-         color: var(--text-mute);
-      }
-
-      .msg {
-         position: relative;
-         max-width: 82%;
-         padding: 8px 12px;
-         border-radius: 16px;
-         background: #f2f2f7;
-         font-size: 14px;
-         line-height: 1.4;
-         display: flex;
-         flex-direction: column;
-         white-space: pre-wrap;
-         word-break: break-word;
-         width: fit-content;
-         margin-top: 2px;
-         transition: all 0.3s ease;
-      }
-
-      .msg.me {
-         align-self: flex-end;
-         background: var(--accent);
-         color: #fff;
-         border-bottom-right-radius: 4px;
-      }
-
-      .msg.not-me {
-         align-self: flex-start;
-         border-bottom-left-radius: 4px;
-      }
-
-      .msg.me a, .msg.not-me a {
-         color: #169cf5;
-      }
-
-      .msg.group-start {
-         margin-top: 14px;
-      }
-
-      .msg-header {
-         display: flex;
-         align-items: center;
-         gap: 4px;
-         margin-bottom: 2px;
-      }
-
-      .msg-user {
-         font-size: 10px;
-         color: var(--accent);
-         cursor: pointer;
-         font-weight: 700;
-      }
-
-      .msg.me .msg-user {
-         color: hsla(0, 0%, 100%, 0.7);
-      }
-
-      .msg-time {
-         font-size: 8px;
-         opacity: 0.4;
-         text-align: right;
-         margin-top: 1px;
-         align-self: flex-end;
-         display: flex;
-         align-items: center;
-         gap: 4px;
-      }
-
-      .msg-continuation .msg-header {
-         display: none;
-      }
-
-      .msg-continuation {
-         margin-top: 1px;
-      }
-
-      .msg-continuation.msg.me {
-         border-radius: 16px 4px 4px 16px;
-      }
-
-      .msg-continuation.msg.not-me {
-         border-radius: 4px 16px 16px 4px;
-      }
-
-      .msg.me.group-start {
-         border-radius: 16px 16px 4px 16px;
-      }
-
-      .msg.not-me.group-start {
-         border-radius: 16px 16px 16px 4px;
-      }
-
-      .edited-tag {
-         font-size: 8px;
-         opacity: 0.6;
-         font-weight: 600;
-      }
-
-      .deleted-text {
-         opacity: 0.5;
-         font-style: italic;
-         font-size: 13px;
-      }
-
-      .msg-pending {
-         opacity: 0.7;
-         border-style: dashed;
-         border-width: 1px;
-      }
-
-      .msg-pending.msg.me {
-         background: var(--text-mute);
-      }
-
-      @keyframes popIn {
-         0% { opacity: 0; transform: scale(0.9) translateY(10px); }
-         100% { opacity: 1; transform: scale(1) translateY(0); }
-      }
-
-      .pop-in {
-         animation: popIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-      }
-
-      #context-menu {
-         position: fixed;
-         background: hsla(0, 0%, 100%, 0.98);
-         backdrop-filter: blur(20px);
-         border-radius: 14px;
-         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
-         z-index: 99999;
-         padding: 6px;
-         min-width: 140px;
-         display: flex;
-         flex-direction: column;
-         gap: 2px;
-         opacity: 0;
-         transform: scale(0.95);
-         pointer-events: none;
-         transition: opacity 0.15s, transform 0.15s;
-      }
-
-      #context-menu.active {
-         opacity: 1;
-         transform: scale(1);
-         pointer-events: auto;
-      }
-
-      .ctx-item {
-         background: none;
-         border: none;
-         width: 100%;
-         padding: 10px 12px;
-         text-align: left;
-         font-size: 13px;
-         font-weight: 600;
-         color: var(--text-main);
-         cursor: pointer;
-         display: flex;
-         align-items: center;
-         gap: 8px;
-         border-radius: 8px;
-      }
-
-      .ctx-item:active {
-         background: #f2f2f7;
-      }
-
-      .ctx-item.danger {
-         color: var(--danger);
-      }
-
-      .ctx-item i {
-         width: 16px;
-         height: 16px;
-      }
-
-      .chat-avatar {
-         width: 36px;
-         height: 36px;
-         border-radius: 50%;
-         background: #f2f2f7;
-         overflow: hidden;
-         flex-shrink: 0;
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         color: var(--accent);
-         font-weight: 800;
-         font-size: 12px;
-         line-height: 1;
-         position: relative;
-         padding: 2px;
-      }
-
-      .chat-avatar img {
-         width: 100%;
-         height: 100%;
-         object-fit: cover;
-         border-radius: 50%;
-      }
-
-      .status-border {
-         border: 2px solid var(--text-mute);
-         transition: border-color 0.3s ease;
-      }
-
-      .status-connected {
-         border-color: var(--success);
-      }
-
-      .status-connecting {
-         border-color: var(--warning);
-      }
-
-      .status-offline {
-         border-color: var(--text-mute);
-      }
-
-      .chat-header-main {
-         display: flex;
-         align-items: center;
-         gap: 10px;
-         flex: 1;
-         min-width: 0;
-      }
-
-      .chat-header-title-wrapper {
-         display: flex;
-         flex-direction: column;
-         min-width: 0;
-      }
-
-      .chat-header-title-wrapper .title {
-         font-size: 16px;
-         margin: 0;
-         white-space: nowrap;
-         overflow: hidden;
-         text-overflow: ellipsis;
-         text-align: left;
-      }
-
-      .chat-header-subtitle {
-         display: flex;
-         align-items: center;
-         gap: 4px;
-         font-size: 9px;
-         color: var(--text-mute);
-         text-transform: uppercase;
-         letter-spacing: 0.5px;
-         font-weight: 600;
-      }
-
-      .chat-subtitle {
-         font-size: 9px;
-         color: var(--text-mute);
-         text-transform: uppercase;
-         letter-spacing: 0.5px;
-         font-weight: 600;
-      }
-
-      /* Step Container & Wizard */
-      .step-container {
-         position: relative;
-         overflow: hidden;
-         width: 100%;
-      }
-
-      .wizard-step {
-         display: none;
-         flex-direction: column;
-         gap: 12px;
-         width: 100%;
-         animation: stepFade 0.3s ease;
-      }
-
-      .wizard-step.active {
-         display: flex;
-      }
-
-      @keyframes stepFade {
-         0% { opacity: 0; transform: translateX(20px); }
-         100% { opacity: 1; transform: translateX(0); }
-      }
-
-      .step-indicator {
-         display: flex;
-         justify-content: center;
-         gap: 6px;
-         margin-bottom: 20px;
-      }
-
-      .step-dot {
-         width: 6px;
-         height: 6px;
-         border-radius: 50%;
-         background: var(--border);
-         transition: all 0.2s;
-      }
-
-      .step-dot.active {
-         background: var(--accent);
-         width: 20px;
-         border-radius: 4px;
-      }
-
-      /* Type Card */
-      .type-card {
-         padding: 16px;
-         border-radius: var(--radius);
-         background: #fff;
-         border: 1px solid var(--border);
-         cursor: pointer;
-         transition: 0.15s;
-         display: flex;
-         align-items: center;
-         gap: 12px;
-         width: 100%;
-         text-align: left;
-         margin-bottom: 8px;
-      }
-
-      .type-card:active {
-         transform: scale(0.99);
-      }
-
-      .type-card.selected {
-         border-color: var(--accent);
-         background: rgba(0, 122, 255, 0.03);
-      }
-
-      .type-icon {
-         width: 36px;
-         height: 36px;
-         border-radius: 10px;
-         background: #f2f2f7;
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         color: var(--accent);
-      }
-
-      .type-info h4 {
-         font-size: 14px;
-         margin-bottom: 1px;
-         font-weight: 700;
-      }
-
-      .type-info p {
-         font-size: 11px;
-         color: var(--text-mute);
-      }
-
-      /* Avatar Carousel */
-      .avatar-carousel-container {
-         display: flex;
-         flex-direction: column;
-         align-items: center;
-         gap: 16px;
-         margin-bottom: 12px;
-      }
-
-      .carousel-wrapper {
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         gap: 12px;
-         width: 100%;
-      }
-
-      .carousel-btn {
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         width: 40px;
-         height: 40px;
-         border-radius: 50%;
-         background: var(--bg);
-         border: 1px solid var(--border);
-         cursor: pointer;
-         transition: 0.2s;
-      }
-
-      .carousel-btn:active {
-         transform: scale(0.95);
-         background: #f2f2f7;
-      }
-
-      .carousel-preview {
-         width: 100px;
-         height: 100px;
-         border-radius: 50%;
-         background: #f2f2f7;
-         border: 2px solid var(--border);
-         overflow: hidden;
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-      }
-
-      .carousel-preview img {
-         width: 100%;
-         height: 100%;
-         object-fit: cover;
-      }
-
-      .upload-btn-wrapper {
-         width: 100%;
-         margin-top: 8px;
-      }
-
-      .upload-btn {
-         width: 100%;
-         height: 44px;
-         border-radius: var(--radius);
-         border: 1px dashed var(--accent);
-         background: transparent;
-         color: var(--accent);
-         font-weight: 600;
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         gap: 8px;
-         cursor: pointer;
-      }
-
-      /* Overlay */
-      #overlay-container {
-         position: absolute;
-         background: rgba(0, 0, 0, 0.4);
-         z-index: 5000;
-         transition: opacity 0.3s;
-         backdrop-filter: blur(16px);
-         opacity: 0;
-         display: none;
-         padding: 20px;
-         inset: 0;
-      }
-
-      #overlay-container.active {
-         display: flex;
-         opacity: 1;
-         align-items: center;
-         justify-content: center;
-      }
-
-      .panel-card {
-         background: var(--bg);
-         width: 100%;
-         max-width: 340px;
-         border-radius: 20px;
-         padding: 20px;
-         box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
-         animation: panelSlide 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-         max-height: 80vh;
-         overflow: hidden;
-      }
-
-      @keyframes panelSlide {
-         0% { transform: translateY(40px); opacity: 0; }
-         100% { transform: translateY(0); opacity: 1; }
-      }
-
-      .view-content {
-         display: none;
-      }
-
-      .view-content.active {
-         display: block;
-      }
-
-      /* Access Summary Card */
-      .access-summary-card {
-         width: 100%;
-         background: #f2f2f7;
-         padding: 12px;
-         display: flex;
-         justify-content: space-between;
-         align-items: center;
-         margin-bottom: 12px;
-         border-radius: var(--radius);
-         border: 1px solid var(--border);
-         cursor: pointer;
-         transition: 0.15s;
-      }
-
-      /* Switch Toggle */
-      .switch {
-         position: relative;
-         display: inline-block;
-         width: 44px;
-         height: 24px;
-      }
-
-      .switch input {
-         opacity: 0;
-         width: 0;
-         height: 0;
-      }
-
-      .slider {
-         cursor: pointer;
-         position: absolute;
-         inset: 0;
-         background-color: #ccc;
-         border-radius: 24px;
-         transition: 0.2s;
-      }
-
-      .slider:before {
-         position: absolute;
-         content: "";
-         height: 18px;
-         width: 18px;
-         left: 3px;
-         bottom: 3px;
-         background-color: #fff;
-         border-radius: 50%;
-         transition: 0.2s;
-      }
-
-      input:checked + .slider {
-         background-color: var(--accent);
-      }
-
-      input:checked + .slider:before {
-         transform: translateX(20px);
-      }
-
-      /* Account Info Card */
-      .acc-info-card {
-         background: #f2f2f7;
-         border-radius: var(--radius);
-         padding: 14px;
-         margin-bottom: 12px;
-      }
-
-      .acc-label {
-         font-size: 10px;
-         text-transform: uppercase;
-         letter-spacing: 0.5px;
-         color: var(--text-mute);
-         font-weight: 700;
-         margin-bottom: 4px;
-      }
-
-      .acc-value {
-         font-size: 14px;
-         font-weight: 600;
-         color: var(--text-main);
-         word-break: break-all;
-      }
-
-      /* Room Info */
-      .info-header {
-         text-align: center;
-         margin-bottom: 24px;
-      }
-
-      .info-avatar {
-         width: 80px;
-         height: 80px;
-         border-radius: 50%;
-         background: #f2f2f7;
-         margin: 0 auto 12px;
-         overflow: hidden;
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         color: var(--accent);
-         font-size: 28px;
-         font-weight: 800;
-      }
-
-      .info-avatar img {
-         width: 100%;
-         height: 100%;
-         object-fit: cover;
-      }
-
-      .info-title {
-         font-size: 18px;
-         font-weight: 800;
-         color: #000;
-         margin-bottom: 4px;
-      }
-
-      .info-subtitle {
-         font-size: 12px;
-         color: var(--text-mute);
-         text-transform: uppercase;
-         font-weight: 600;
-         letter-spacing: 0.5px;
-      }
-
-      .info-section {
-         background: #f2f2f7;
-         border-radius: var(--radius);
-         margin-bottom: 16px;
-         padding: 4px 0;
-      }
-
-      .info-row {
-         display: flex;
-         justify-content: space-between;
-         align-items: center;
-         padding: 12px 14px;
-         font-size: 13px;
-      }
-
-      .info-row:not(:last-child) {
-         border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-      }
-
-      .info-label {
-         color: var(--text-mute);
-         font-weight: 500;
-      }
-
-      .info-value {
-         color: var(--text-main);
-         font-weight: 600;
-         text-align: right;
-         max-width: 60%;
-         white-space: nowrap;
-         overflow: hidden;
-         text-overflow: ellipsis;
-      }
-
-      .info-value.clickable {
-         color: var(--accent);
-         cursor: pointer;
-      }
-
-      .status-legend {
-         display: flex;
-         align-items: center;
-         gap: 8px;
-         margin-top: 4px;
-      }
-
-      .status-dot {
-         width: 8px;
-         height: 8px;
-         border-radius: 50%;
-      }
-
-      .danger-zone {
-         margin-top: 24px;
-         padding-top: 16px;
-         border-top: 1px solid var(--border);
-      }
-
-      .refresh-btn {
-         background: none;
-         border: none;
-         padding: 4px;
-         color: var(--text-mute);
-         cursor: pointer;
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         transition: transform 0.2s;
-      }
-
-      .refresh-btn:active {
-         transform: rotate(90deg);
-      }
-
-      #chat-input-area {
-         display: flex;
-         gap: 10px;
-         padding-top: 12px;
-         align-items: flex-end;
-         border-top: 1px solid var(--border);
-      }
-
-      #send-btn {
-         width: 50px;
-         min-width: 50px;
-         height: 50px;
-         padding: 0;
-         border-radius: var(--radius);
-         flex-shrink: 0;
-      }
-
-      #chat-input {
-         margin: 0;
-      }
-
-      .icon-wrapper {
-         width: 20px;
-         height: 20px;
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         cursor: pointer;
-      }
-
-      .edit-modal-textarea {
-         width: 100%;
-         height: 120px;
-         border: 1px solid var(--border);
-         border-radius: var(--radius);
-         padding: 12px;
-         font-size: 14px;
-         font-family: inherit;
-         resize: none;
-         margin-bottom: 12px;
-      }
-
-      .pill-badge {
-         font-size: 9px;
-         background: var(--accent);
-         color: #fff;
-         padding: 2px 6px;
-         border-radius: 99px;
-         font-weight: 700;
-         margin-left: 6px;
-      }
-
-      .online-dot {
-         width: 6px;
-         height: 6px;
-         background: var(--success);
-         border-radius: 50%;
-         display: inline-block;
-         margin-right: 4px;
-      }
-
-      .clickable {
-         cursor: pointer;
-      }
-
-      /* Close button */
-      .close-btn {
-         background: rgba(0, 0, 0, 0.05);
-         border: none;
-         border-radius: 8px;
-         padding: 6px;
-         cursor: pointer;
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         color: var(--text-main);
-      }
-
-      /* Verification input */
-      .verify-input {
-         text-align: center;
-         font-size: 22px;
-         letter-spacing: 6px;
-      }
-
-      /* Account page specific */
-      .acc-page-avatar {
-         width: 90px;
-         height: 90px;
-         font-size: 36px;
-         margin: 0 auto 12px auto;
-      }
-
-      .acc-page-name {
-         font-size: 22px;
-      }
-
-      .acc-page-id {
-         cursor: pointer;
-         color: var(--accent);
-         font-family: monospace;
-         font-size: 12px;
-      }
-
-      .acc-page-email {
-         font-size: 12px;
-      }
-
-      /* Success screen */
-      .success-id {
-         text-align: center;
-         color: var(--accent);
-         font-weight: 800;
-         border: 1px dashed var(--accent);
-      }
-
-      /* Toggle switch row */
-      .toggle-row {
-         display: flex;
-         justify-content: space-between;
-         align-items: center;
-         width: 100%;
-         padding: 12px;
-         background: #f2f2f7;
-         border-radius: var(--radius);
-         margin-bottom: 12px;
-      }
-
-      .toggle-row-label {
-         font-weight: 600;
-         font-size: 13px;
-      }
-
-      /* Password section */
-      .password-section {
-         margin-bottom: 12px;
-      }
-
-      .password-header {
-         display: flex;
-         justify-content: space-between;
-         align-items: center;
-         width: 100%;
-         padding: 0 0 8px 0;
-      }
-
-      .password-label {
-         font-weight: 600;
-         font-size: 12px;
-      }
-
-      .password-status {
-         font-size: 9px;
-         color: var(--text-mute);
-         text-transform: uppercase;
-         font-weight: 700;
-      }
-
-      .remove-pass-btn {
-         height: auto;
-         padding: 4px 0;
-         display: none;
-         justify-content: flex-start;
-      }
-
-      /* Presence section */
-      .presence-section {
-         background: transparent;
-         padding: 0;
-      }
-
-      .presence-label {
-         padding: 0 0 8px 4px;
-         font-size: 11px;
-         font-weight: 700;
-         color: var(--text-mute);
-         text-transform: uppercase;
-      }
-
-      .presence-list {
-         display: flex;
-         flex-direction: column;
-         gap: 6px;
-         background: #f2f2f7;
-         padding: 12px 14px;
-         border-radius: var(--radius);
-      }
-
-      .presence-item {
-         display: flex;
-         justify-content: space-between;
-         align-items: center;
-      }
-
-      /* Picker */
-      .picker-header {
-         text-align: center;
-      }
-
-      .picker-input-row {
-         display: flex;
-         gap: 6px;
-         align-items: center;
-      }
-
-      .picker-add-btn {
-         width: auto;
-         padding: 0 12px;
-         height: 44px;
-      }
-
-      .picker-label {
-         font-size: 9px;
-         color: var(--text-mute);
-         text-transform: uppercase;
-         letter-spacing: 1px;
-         font-weight: 800;
-      }
-
-      .picker-list {
-         flex: 1;
-         overflow-y: auto;
-         padding-right: 4px;
-         max-height: 200px;
-      }
-
-      .picker-empty {
-         color: var(--text-mute);
-         padding: 20px 0;
-         font-size: 12px;
-         text-align: center;
-      }
-
-      /* Action buttons */
-      .action-buttons {
-         display: flex;
-         gap: 8px;
-         margin-top: 4px;
-      }
-
-      .action-buttons .btn {
-         flex: 1;
-      }
-
-      .btn-back {
-         background: #f2f2f7;
-         flex: 1;
-      }
-
-      .btn-accent-flex {
-         flex: 1;
-      }
-
-      /* Avatar large */
-      .avatar-lg {
-         width: 32px;
-         height: 32px;
-         cursor: pointer;
-      }
-
-      /* Room list */
-      #room-list {
-         flex: 1;
-         overflow-y: auto;
-      }
-
-      /* Lobby footer */
-      .lobby-footer {
-         display: flex;
-         gap: 10px;
-         padding-top: 12px;
-         border-top: 1px solid var(--border);
-      }
-
-      .lobby-footer .input-field {
-         flex: 1;
-      }
-
-      /* Chat header gap */
-      .header-gap {
-         width: 22px;
-      }
-
-      /* Create room fields */
-      #create-group-fields, #create-direct-fields {
-         display: flex;
-         flex-direction: column;
-         gap: 0;
-      }
-
-      /* Danger zone buttons */
-      .danger-buttons {
-         margin-top: 24px;
-         display: flex;
-         flex-direction: column;
-         gap: 10px;
-      }
-
-      /* Presence badge variant */
-      .pill-badge-main {
-         background: var(--text-main);
-      }
-
-      /* Centered account section */
-      .account-center {
-         padding-top: 20px;
-         margin-bottom: 30px;
-      }
-
-      .account-center .chat-avatar {
-         margin: 0 auto 12px auto;
-      }
-
-      .account-info {
-         padding: 0 10px;
-      }
-
-      .logout-wrapper {
-         padding: 20px;
-         margin-top: auto;
-      }
-
-      .logout-btn {
-         background: transparent;
-         border: 1px dotted var(--accent);
-         color: var(--accent);
-      }
-
-      /* Info delete button */
-      #info-delete-btn {
-         display: none;
-      }
-
-      /* Form step back button */
-      .btn-back-muted {
-         color: var(--text-mute);
-      }
-
-      /* Timer */
-      #v-timer {
-         color: var(--accent);
-         font-weight: 800;
-         font-size: 12px;
-      }
-
-      /* Gate input */
-      .gate-input {
-         text-align: center;
-      }
-   </style>
-</head>
-<body>
-   <div id="app">
-      <div id="overlay-container">
-         <div class="panel-card">
-            <div id="view-access-manager" class="view-content">
-               <div class="flex flex-col gap-12 h-full">
-                  <div class="picker-header">
-                     <h3 class="title-md mb-4">Select Users</h3>
-                     <p class="fs-11 c-mute">Add users to restrict access.</p>
+   <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+      <link rel="icon" href="./assets/branding/favicon/favicon-black.png" media="(prefers-color-scheme: light)">
+      <link rel="icon" href="./assets/branding/favicon/favicon-white.png" media="(prefers-color-scheme: dark)">
+      <link rel="manifest" href="./assets/manifest.json">
+      <meta name="theme-color" content="#ffffff">
+      <title>HyperRush Chat</title>
+      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+      <style>
+         :root{--bg:#fff;--surface:#fff;--border:#e5e5ea;--text-main:#1c1c1e;--text-mute:#8e8e93;--accent:#262626;--danger:#ff3b30;--success:#34c759;--warning:#ff9500;--radius:14px }*{margin:0;padding:0;box-sizing:border-box;font-family:Plus Jakarta Sans,sans-serif;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}input,textarea{-webkit-user-select:text;user-select:text}::-webkit-scrollbar{width:0;height:0}body{height:100dvh;background:#f2f2f7;color:var(--text-main);justify-content:center;align-items:center}#app,body{display:flex}#app{width:100%;max-width:440px;height:100%;position:relative;box-shadow:0 0 60px rgba(0,0,0,.05);overflow:hidden}#app,.screen{flex-direction:column;background:var(--bg)}.screen{display:none;padding:20px;inset:0;position:absolute;will-change:transform,opacity;transition:transform .4s cubic-bezier(.19,1,.22,1),opacity .3s ease}.screen.active{display:flex;animation:instantFade .2s ease-out}.screen.slide-left{transform:translateX(-100%);opacity:0}.screen.slide-right{transform:translateX(100%);opacity:0}@keyframes instantFade{0%{opacity:0}to{opacity:1}}.center-content{justify-content:center;align-items:center;text-align:center}h1.title{font-size:28px;letter-spacing:-1px;color:#000;font-weight:800;margin-bottom:4px}.subtitle{text-transform:uppercase;color:var(--text-mute);font-size:11px;font-weight:700;letter-spacing:1px;margin-bottom:24px;display:block}.header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 0 16px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-shrink:0}.input-field{color:var(--text-main);width:100%;background:#f2f2f7;border:1px solid transparent;border-radius:var(--radius);padding:14px;font-size:15px;outline:0;margin-bottom:10px;transition:.2s}.input-field:focus{border-color:var(--accent);background:#fff}.btn{color:var(--text-main);width:100%;height:50px;border-radius:var(--radius);border:1px solid var(--border);background:0 0;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s;cursor:pointer;padding:0 20px}.btn-accent{background:var(--accent);color:#fff;border:none}.btn:active{transform:scale(.98);opacity:.8}.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}#toast-container{position:absolute;top:30px;left:50%;transform:translateX(-50%);z-index:999999;width:85%;pointer-events:none;display:flex;flex-direction:column;align-items:center}.toast-item{background:#fff;color:var(--text-main);padding:12px 18px;border-radius:40px;font-weight:600;font-size:12px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.15);animation:slideUp .3s cubic-bezier(.2,1,.3,1);pointer-events:auto;cursor:pointer;width:100%;margin-bottom:8px;border:1px solid var(--text-mute)}@keyframes slideUp{0%{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}#block-overlay{position:absolute;inset:0;background:var(--bg);z-index:6000;display:none;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center}#block-overlay.active{display:flex}#loader-overlay{position:absolute;inset:0;background:hsla(0,0%,100%,.98);z-index:3500;display:none;align-items:center;justify-content:center;flex-direction:column;gap:12px;opacity:0}#loader-overlay.active{display:flex;opacity:1}.spinner{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .5s linear infinite}@keyframes spin{to{transform:rotate(1turn)}}.loader-text{font-size:11px;font-weight:700;margin-top:6px;color:var(--text-mute)}.room-card{padding:14px;border-radius:var(--radius);background:#fff;display:flex;align-items:center;justify-content:space-between;border:1px solid var(--border);margin-bottom:8px;width:100%;transition:.15s;cursor:pointer}.room-card:active{transform:scale(.99);background:#f9f9f9}.room-name{flex:1;min-width:0;font-weight:700;font-size:14px;margin-right:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.room-icon{flex-shrink:0;color:var(--text-mute)}#chat-messages{flex:1;display:flex;flex-direction:column;overflow-y:auto;background:var(--bg);padding-bottom:10px;position:relative}.date-divider{position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:center;margin:16px auto 4px;width:25%;padding:2px 6px;background:#fff;border:1px solid #ddd;border-radius:999px;text-align:center;color:#333;box-sizing:border-box;font-size:.875rem}.date-label{font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin:0 auto;background:var(--bg);padding:4px 0;font-size:9px;text-align:center;color:var(--text-mute)}.msg{position:relative;max-width:82%;padding:8px 12px;border-radius:16px;background:#f2f2f7;font-size:14px;line-height:1.4;display:flex;flex-direction:column;white-space:pre-wrap;word-break:break-word;width:fit-content;margin-top:2px;transition:all .3s ease}.msg.me{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}.msg.not-me{align-self:flex-start;border-bottom-left-radius:4px}.msg.me a,.msg.not-me a{color:#169cf5}.msg.group-start{margin-top:14px}.msg-header{display:flex;align-items:center;gap:4px;margin-bottom:2px}.msg-user{font-size:10px;color:var(--accent);cursor:pointer;font-weight:700}.msg.me .msg-user{color:hsla(0,0%,100%,.7)}.msg-time{font-size:8px;opacity:.4;text-align:right;margin-top:1px;align-self:flex-end;display:flex;align-items:center;gap:4px}.msg-continuation .msg-header{display:none}.msg-continuation{margin-top:1px}.msg-continuation.msg.me{border-radius:16px 4px 4px 16px}.msg-continuation.msg.not-me{border-radius:4px 16px 16px 4px}.msg.me.group-start{border-radius:16px 16px 4px 16px}.msg.not-me.group-start{border-radius:16px 16px 16px 4px}.edited-tag{font-size:8px;opacity:.6;font-weight:600}.deleted-text{opacity:.5;font-style:italic;font-size:13px}.msg-pending{opacity:.7;border-style:dashed;border-width:1px}.msg-pending.msg.me{background:var(--text-mute)}@keyframes popIn{0%{opacity:0;transform:scale(.9) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}.pop-in{animation:popIn .25s cubic-bezier(.16,1,.3,1)}#context-menu{position:fixed;background:hsla(0,0%,100%,.98);backdrop-filter:blur(20px);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.15);z-index:99999;padding:6px;min-width:140px;display:flex;flex-direction:column;gap:2px;opacity:0;transform:scale(.95);pointer-events:none;transition:opacity .15s,transform .15s}#context-menu.active{opacity:1;transform:scale(1);pointer-events:auto}.ctx-item{background:none;border:none;width:100%;padding:10px 12px;text-align:left;font-size:13px;font-weight:600;color:var(--text-main);cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:8px}.ctx-item:active{background:#f2f2f7}.ctx-item.danger{color:var(--danger)}.ctx-item i{width:16px;height:16px}.chat-avatar{width:36px;height:36px;border-radius:50%;background:#f2f2f7;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--accent);font-weight:800;font-size:12px;line-height:1;position:relative;padding:2px}.chat-avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%}.status-border{border:2px solid var(--text-mute);transition:border-color .3s ease}.status-connected{border-color:var(--success)}.status-connecting{border-color:var(--warning)}.status-offline{border-color:var(--text-mute)}.chat-header-main{display:flex;align-items:center;gap:10px;flex:1;min-width:0}.chat-header-title-wrapper{display:flex;flex-direction:column;min-width:0}.chat-header-title-wrapper .title{font-size:16px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}.chat-header-subtitle{display:flex;align-items:center;gap:4px}.chat-header-subtitle,.chat-subtitle{font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600}.step-container{position:relative;overflow:hidden;width:100%}.wizard-step{display:none;flex-direction:column;gap:12px;width:100%;animation:stepFade .3s ease}.wizard-step.active{display:flex}@keyframes stepFade{0%{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}.step-indicator{display:flex;justify-content:center;gap:6px;margin-bottom:20px}.step-dot{width:6px;height:6px;border-radius:50%;background:var(--border);transition:all .2s}.step-dot.active{background:var(--accent);width:20px;border-radius:4px}.type-card{padding:16px;border-radius:var(--radius);background:#fff;border:1px solid var(--border);cursor:pointer;transition:.15s;display:flex;align-items:center;gap:12px;width:100%;text-align:left;margin-bottom:8px}.type-card:active{transform:scale(.99)}.type-card.selected{border-color:var(--accent);background:rgba(0,122,255,.03)}.type-icon{width:36px;height:36px;border-radius:10px;background:#f2f2f7;display:flex;align-items:center;justify-content:center;color:var(--accent)}.type-info h4{font-size:14px;margin-bottom:1px;font-weight:700}.type-info p{font-size:11px;color:var(--text-mute)}.avatar-carousel-container{display:flex;flex-direction:column;align-items:center;gap:16px;margin-bottom:12px}.carousel-wrapper{gap:12px;width:100%}.carousel-btn,.carousel-wrapper{display:flex;align-items:center;justify-content:center}.carousel-btn{width:40px;height:40px;border-radius:50%;background:var(--bg);border:1px solid var(--border);cursor:pointer;transition:.2s}.carousel-btn:active{transform:scale(.95);background:#f2f2f7}.carousel-preview{width:100px;height:100px;border-radius:50%;background:#f2f2f7;border:2px solid var(--border);overflow:hidden;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,.05)}.carousel-preview img{width:100%;height:100%;object-fit:cover}.upload-btn-wrapper{width:100%;margin-top:8px}.upload-btn{width:100%;height:44px;border-radius:var(--radius);border:1px dashed var(--accent);background:transparent;color:var(--accent);font-weight:600;display:flex;gap:8px;cursor:pointer}#overlay-container,.upload-btn{align-items:center;justify-content:center}#overlay-container{position:absolute;background:rgba(0,0,0,.4);z-index:5000;transition:opacity .3s;backdrop-filter:blur(16px);opacity:0;display:none;padding:20px;inset:0}#overlay-container.active{display:flex;opacity:1}.panel-card{background:var(--bg);width:100%;max-width:340px;border-radius:20px;padding:20px;box-shadow:0 20px 40px rgba(0,0,0,.2);animation:panelSlide .4s cubic-bezier(.16,1,.3,1);max-height:80vh;overflow:hidden}@keyframes panelSlide{0%{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}.view-content{display:none}.view-content.active{display:block}.access-summary-card{border-radius:var(--radius);border:1px solid var(--border);cursor:pointer;transition:.15s}.access-summary-card,.flex-sb-aic-w100-p18-bg-br12-mb20{width:100%;background:#f2f2f7;padding:12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.flex-sb-aic-w100-p18-bg-br12-mb20{border-radius:var(--radius)}.w-48{width:48px}.h-48{height:48px}.mb-24{margin-bottom:24px}.c-danger{color:var(--danger)}.c-warning{color:var(--warning)}.c-main{color:var(--text-main)}.c-accent{color:var(--accent)}.mb-48{margin-bottom:48px}.mt-24{margin-top:24px}.w-100{width:100%}.mt-12{margin-top:12px}.bn{border:none}.mb-20{margin-bottom:20px}.c-mute{color:var(--text-mute)}.fs-12{font-size:12px}.flex-1{flex:1}.flex-gap12-mt20{display:flex;gap:12px;margin-top:20px}.m-0-flex-1{margin:0;flex:1}.w-80{width:80px}.mb-16{margin-bottom:16px}.flex-s0{flex-shrink:0}.dn{display:none}.w-20{width:20px}.h-20{height:20px}.switch{position:relative;display:inline-block;width:44px;height:24px}.switch input{opacity:0;width:0;height:0}.slider{cursor:pointer;inset:0;background-color:#ccc;border-radius:24px}.slider,.slider:before{position:absolute;transition:.2s}.slider:before{content:"";height:18px;width:18px;left:3px;bottom:3px;background-color:#fff;border-radius:50%}input:checked+.slider{background-color:var(--accent)}input:checked+.slider:before{transform:translateX(20px)}.acc-info-card{background:#f2f2f7;border-radius:var(--radius);padding:14px;margin-bottom:12px}.acc-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);font-weight:700;margin-bottom:4px}.acc-value{font-size:14px;font-weight:600;color:var(--text-main);word-break:break-all}.info-header{text-align:center;margin-bottom:24px}.info-avatar{width:80px;height:80px;border-radius:50%;background:#f2f2f7;margin:0 auto 12px;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:28px;font-weight:800}.info-avatar img{width:100%;height:100%;object-fit:cover}.info-title{font-size:18px;font-weight:800;color:#000;margin-bottom:4px}.info-subtitle{font-size:12px;color:var(--text-mute);text-transform:uppercase;font-weight:600;letter-spacing:.5px}.info-section{background:#f2f2f7;border-radius:var(--radius);margin-bottom:16px;padding:4px 0}.info-row{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;font-size:13px}.info-row:not(:last-child){border-bottom:1px solid rgba(0,0,0,.05)}.info-label{color:var(--text-mute);font-weight:500}.info-value{color:var(--text-main);font-weight:600;text-align:right;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.info-value.clickable{color:var(--accent);cursor:pointer}.status-legend{display:flex;align-items:center;gap:8px;margin-top:4px}.status-dot{width:8px;height:8px;border-radius:50%}.danger-zone{margin-top:24px;padding-top:16px;border-top:1px solid var(--border)}.btn-danger{background:rgba(255,59,48,.1);color:var(--danger);border:none}.btn-danger:hover{background:rgba(255,59,48,.15)}.btn-danger.active{background:var(--danger);color:#fff}.btn-outline{background:transparent;color:var(--accent);border:1px solid var(--border)}.refresh-btn{background:none;border:none;padding:4px;color:var(--text-mute);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .2s}.refresh-btn:active{transform:rotate(90deg)}#chat-input-area{display:flex;gap:10px;padding-top:12px;align-items:flex-end;border-top:1px solid var(--border)}#send-btn{width:50px;min-width:50px;height:50px;padding:0;border-radius:var(--radius);flex-shrink:0}#chat-input{margin:0}.icon-wrapper{width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer}.edit-modal-textarea{width:100%;height:120px;border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:14px;font-family:inherit;resize:none;margin-bottom:12px}.pill-badge{font-size:9px;background:var(--accent);color:#fff;padding:2px 6px;border-radius:99px;font-weight:700;margin-left:6px}.online-dot{width:6px;height:6px;background:var(--success);border-radius:50%;display:inline-block;margin-right:4px}
+      </style>
+   </head>
+   <body>
+      <div id="app">
+         <div id="overlay-container">
+            <div class="panel-card">
+               <div id="view-access-manager" class="view-content">
+                  <div style="display:flex;flex-direction:column;gap:12px;height:100%">
+                     <div style="text-align:center">
+                        <h3 style="font-size:16px;font-weight:800;margin-bottom:4px">Select Users</h3>
+                        <p style="font-size:11px;color:var(--text-mute)">Add users to restrict access.</p>
+                     </div>
+                     <div style="display:flex;gap:6px;align-items:center"><input id="picker-id-input" class="input-field" placeholder="Paste User ID..." style="margin-bottom:0"><button class="btn btn-accent" style="width:auto;padding:0 12px;height:44px" onclick="window.addUserById()">Add</button></div>
+                     <label style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;font-weight:800">Added (<span id="picker-count">0</span>)</label>
+                     <div id="picker-selected-list" style="flex:1;overflow-y:auto;padding-right:4px;max-height:200px">
+                        <div style="color:var(--text-mute);padding:20px 0;font-size:12px;text-align:center">No users added.</div>
+                     </div>
+                     <button class="btn btn-accent" style="height:48px" onclick="window.closeAccessManager()">Done</button>
                   </div>
-                  <div class="picker-input-row">
-                     <input id="picker-id-input" class="input-field input-field-no-margin" placeholder="Paste User ID...">
-                     <button class="btn btn-accent picker-add-btn" onclick="window.addUserById()">Add</button>
+               </div>
+               <div id="view-room-settings" class="view-content">
+                  <div style="display:flex;justify-content:space-between;align-items:center;width:100%;margin-bottom:16px">
+                     <h3 style="margin:0;font-weight:800;font-size:16px">Settings</h3>
+                     <button style="background:rgba(0,0,0,0.05);border:none;border-radius:8px;padding:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text-main)" onclick="window.closeOverlay()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x">
+                           <path d="M18 6 6 18"/>
+                           <path d="m6 6 12 12"/>
+                        </svg>
+                     </button>
                   </div>
-                  <label class="picker-label">Added (<span id="picker-count">0</span>)</label>
-                  <div id="picker-selected-list" class="picker-list">
-                     <div class="picker-empty">No users added.</div>
+                  <div class="step-indicator" id="edit-step-indicator">
+                     <div class="step-dot active"></div>
+                     <div class="step-dot"></div>
                   </div>
-                  <button class="btn btn-accent h-48" onclick="window.closeAccessManager()">Done</button>
+                  <div class="step-container">
+                     <div id="edit-step-1" class="wizard-step active">
+                        <input id="edit-room-name" class="input-field" placeholder="Room Name">
+                        <div class="flex-sb-aic-w100-p18-bg-br12-mb20"><span style="font-weight:600;font-size:13px">Visible in Lobby</span><label class="switch"><input type="checkbox" id="edit-room-visible" checked><span class="slider"></span></label></div>
+                        <button class="btn btn-accent" onclick="window.nextEditStep()">Next</button>
+                     </div>
+                     <div id="edit-step-2" class="wizard-step">
+                        <div style="margin-bottom:12px">
+                           <div style="display:flex;justify-content:space-between;align-items:center;width:100%;padding:0 0 8px 0"><span style="font-weight:600;font-size:12px">Password</span><span id="pass-status-label" style="font-size:9px;color:var(--text-mute);text-transform:uppercase;font-weight:700">Not Set</span></div>
+                           <input id="edit-room-pass" type="password" class="input-field" placeholder="Change password" autocomplete="new-password"><button id="btn-remove-pass" class="btn bn c-danger fs-12" style="height:auto;padding:4px 0;display:none;justify-content:flex-start" onclick="window.prepareRemovePassword()">Remove Password</button>
+                        </div>
+                        <div id="edit-access-summary" class="access-summary-card" onclick="window.openAccessManager('edit-room')">
+                           <span class="c-main">Public Room</span>
+                           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-right">
+                              <path d="m9 18 6-6-6-6"/>
+                           </svg>
+                        </div>
+                        <div style="display:flex;gap:8px;margin-top:4px"><button class="btn" style="background:#f2f2f7;flex:1" onclick="window.prevEditStep()">Back</button><button class="btn btn-accent" style="flex:1" onclick="window.saveRoomSettings(event)">Save</button></div>
+                     </div>
+                  </div>
+               </div>
+               <div id="view-room-info" class="view-content">
+                  <div style="display:flex;justify-content:space-between;align-items:center;width:100%;margin-bottom:16px">
+                     <h3 style="margin:0;font-weight:800;font-size:16px">Room Info</h3>
+                     <button style="background:rgba(0,0,0,0.05);border:none;border-radius:8px;padding:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text-main)" onclick="window.closeOverlay()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x">
+                           <path d="M18 6 6 18"/>
+                           <path d="m6 6 12 12"/>
+                        </svg>
+                     </button>
+                  </div>
+                  <div class="info-header">
+                     <div id="info-avatar" class="info-avatar">?</div>
+                     <div id="info-name" class="info-title">Room Name</div>
+                     <div id="info-type" class="info-subtitle">Group</div>
+                  </div>
+                  <div class="info-section">
+                     <div class="info-row" id="info-creator-row"><span class="info-label">Created By</span><span id="info-creator" class="info-value">User</span></div>
+                     <div class="info-row">
+                        <span class="info-label">Room ID</span>
+                        <div style="display:flex;align-items:center;gap:6px">
+                           <span id="info-id" class="info-value" style="font-family:monospace;font-size:11px;max-width:120px">id</span>
+                           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy" style="width:14px;height:14px;color:var(--accent);cursor:pointer;flex-shrink:0" onclick="window.copyInfoId()">
+                              <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                           </svg>
+                        </div>
+                     </div>
+                     <div class="info-row"><span class="info-label">Created</span><span id="info-date" class="info-value">Date</span></div>
+                  </div>
+                  <div class="info-section" style="background:transparent;padding:0">
+                     <div style="padding:0 0 8px 4px;font-size:11px;font-weight:700;color:var(--text-mute);text-transform:uppercase">Presence</div>
+                     <div style="display:flex;flex-direction:column;gap:6px;background:#f2f2f7;padding:12px 14px;border-radius:var(--radius)">
+                        <div style="display:flex;justify-content:space-between;align-items:center">
+                           <div class="status-legend">
+                              <div class="status-dot" style="background:var(--success)"></div>
+                              <span style="font-size:12px;font-weight:600">This Room</span>
+                           </div>
+                           <span id="info-room-count" class="pill-badge">-</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;align-items:center">
+                           <div class="status-legend">
+                              <div class="status-dot" style="background:var(--accent)"></div>
+                              <span style="font-size:12px;font-weight:600">Global Network</span>
+                           </div>
+                           <span id="info-global-count" class="pill-badge" style="background:var(--text-main)">0</span>
+                        </div>
+                     </div>
+                  </div>
+                  <div style="margin-top:24px; display:flex; flex-direction:column; gap:10px"><button id="info-delete-btn" class="btn btn-danger" style="display:none" onclick="window.initiateDeleteRoom()">Delete Chat</button></div>
+               </div>
+               <div id="view-edit-message" class="view-content">
+                  <div style="display:flex;justify-content:space-between;align-items:center;width:100%;margin-bottom:16px">
+                     <h3 style="margin:0;font-weight:800;font-size:16px">Edit Message</h3>
+                     <button style="background:rgba(0,0,0,0.05);border:none;border-radius:8px;padding:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text-main)" onclick="window.closeOverlay()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x">
+                           <path d="M18 6 6 18"/>
+                           <path d="m6 6 12 12"/>
+                        </svg>
+                     </button>
+                  </div>
+                  <textarea id="edit-msg-input" class="edit-modal-textarea" placeholder="Message..."></textarea>
+                  <button class="btn btn-accent" onclick="window.saveEditMessage()">Save</button>
                </div>
             </div>
-            <div id="view-room-settings" class="view-content">
-               <div class="flex justify-between items-center w-full mb-16">
-                  <h3 class="title-md">Settings</h3>
-                  <button class="close-btn" onclick="window.closeOverlay()">
-                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M18 6 6 18"/>
-                        <path d="m6 6 12 12"/>
-                     </svg>
-                  </button>
+         </div>
+         <div id="block-overlay"></div>
+         <div id="loader-overlay" class="active">
+            <div class="spinner"></div>
+            <span id="loader-text" class="loader-text">Initializing...</span>
+         </div>
+         <div id="toast-container"></div>
+         <div id="context-menu">
+            <button class="ctx-item" id="ctx-edit">
+               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pencil">
+                  <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/>
+                  <path d="m15 5 4 4"/>
+               </svg>
+               Edit
+            </button>
+            <button class="ctx-item" id="ctx-copy">
+               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+               </svg>
+               Copy
+            </button>
+            <button class="ctx-item danger" id="ctx-delete">
+               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash-2">
+                  <path d="M10 11v6"/>
+                  <path d="M14 11v6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                  <path d="M3 6h18"/>
+                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+               </svg>
+               Delete
+            </button>
+         </div>
+         <div id="scr-start" class="screen active center-content">
+            <h1 class="title">HRN Chat</h1>
+            <p class="subtitle">Secure Network</p>
+            <button class="btn btn-accent" onclick="window.nav('scr-login')">Sign In</button><button class="btn mt-12" onclick="window.nav('scr-register')">Create Account</button>
+         </div>
+         <div id="scr-login" class="screen center-content">
+            <h1 class="title">Sign In</h1>
+            <p class="subtitle">Access Secure Room</p>
+            <input id="l-email" class="input-field" type="email" placeholder="Email Address"><input id="l-pass" type="password" class="input-field" placeholder="Password"><button class="btn btn-accent" onclick="window.handleLogin(event)">Access</button><button class="btn bn mt-12" style="color:var(--text-mute)" onclick="window.nav('scr-start')">Back</button>
+         </div>
+         <div id="scr-register" class="screen center-content">
+            <div class="step-indicator" id="reg-step-indicator">
+               <div class="step-dot active"></div>
+               <div class="step-dot"></div>
+               <div class="step-dot"></div>
+            </div>
+            <div class="step-container">
+               <div id="reg-step-1" class="wizard-step active">
+                  <h1 class="title">Sign Up</h1>
+                  <p class="subtitle">Step 1 of 3</p>
+                  <input id="r-email" class="input-field" type="email" placeholder="Email Address">
+                  <input id="r-pass" class="input-field" type="password" placeholder="Password (min. 8 chars)">
+                  <button class="btn btn-accent" onclick="window.nextRegStep()">Next</button>
                </div>
-               <div class="step-indicator" id="edit-step-indicator">
-                  <div class="step-dot active"></div>
-                  <div class="step-dot"></div>
+               <div id="reg-step-2" class="wizard-step">
+                  <h1 class="title">Profile</h1>
+                  <p class="subtitle">Step 2 of 3</p>
+                  <input id="r-name" class="input-field" placeholder="Full Name">
+                  <div style="display:flex;gap:8px;margin-top:4px">
+                     <button class="btn" style="background:#f2f2f7;flex:1" onclick="window.prevRegStep()">Back</button>
+                     <button class="btn btn-accent" style="flex:1" onclick="window.nextRegStep()">Next</button>
+                  </div>
                </div>
-               <div class="step-container">
-                  <div id="edit-step-1" class="wizard-step active">
-                     <input id="edit-room-name" class="input-field" placeholder="Room Name">
-                     <div class="toggle-row">
-                        <span class="toggle-row-label">Visible in Lobby</span>
-                        <label class="switch">
-                           <input type="checkbox" id="edit-room-visible" checked>
-                           <span class="slider"></span>
+               <div id="reg-step-3" class="wizard-step">
+                  <h1 class="title">Avatar</h1>
+                  <p class="subtitle">Step 3 of 3</p>
+                  <div class="avatar-carousel-container">
+                     <div class="carousel-wrapper">
+                        <button class="carousel-btn" onclick="window.carouselNav(-1)">
+                           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-left">
+                              <path d="m15 18-6-6 6-6"/>
+                           </svg>
+                        </button>
+                        <div class="carousel-preview" id="avatar-preview-el"></div>
+                        <button class="carousel-btn" onclick="window.carouselNav(1)">
+                           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-right">
+                              <path d="m9 18 6-6-6-6"/>
+                           </svg>
+                        </button>
+                     </div>
+                     <div class="upload-btn-wrapper">
+                        <label class="upload-btn">
+                           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-upload">
+                              <path d="M12 3v12"/>
+                              <path d="m17 8-5-5-5 5"/>
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                           </svg>
+                           <span>Upload Custom</span>
+                           <input type="file" id="avatar-upload-input" accept="image/*" style="display:none" onchange="window.handleAvatarUpload(event)">
                         </label>
                      </div>
-                     <button class="btn btn-accent" onclick="window.nextEditStep()">Next</button>
                   </div>
-                  <div id="edit-step-2" class="wizard-step">
-                     <div class="password-section">
-                        <div class="password-header">
-                           <span class="password-label">Password</span>
-                           <span id="pass-status-label" class="password-status">Not Set</span>
-                        </div>
-                        <input id="edit-room-pass" type="password" class="input-field" placeholder="Change password" autocomplete="new-password">
-                        <button id="btn-remove-pass" class="btn border-none c-danger fs-12 remove-pass-btn" onclick="window.prepareRemovePassword()">Remove Password</button>
-                     </div>
-                     <div id="edit-access-summary" class="access-summary-card" onclick="window.openAccessManager('edit-room')">
-                        <span class="c-main">Public Room</span>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                           <path d="m9 18 6-6-6-6"/>
-                        </svg>
-                     </div>
-                     <div class="action-buttons">
-                        <button class="btn btn-back" onclick="window.prevEditStep()">Back</button>
-                        <button class="btn btn-accent btn-accent-flex" onclick="window.saveRoomSettings(event)">Save</button>
-                     </div>
+                  <input id="r-avatar-url" class="input-field" placeholder="Or paste Image URL..." style="margin-top:8px">
+                  <div style="display:flex;gap:8px;margin-top:4px">
+                     <button class="btn" style="background:#f2f2f7;flex:1" onclick="window.prevRegStep()">Back</button>
+                     <button class="btn btn-accent" style="flex:1" onclick="window.handleRegister(event)">Verify</button>
                   </div>
                </div>
             </div>
-            <div id="view-room-info" class="view-content">
-               <div class="flex justify-between items-center w-full mb-16">
-                  <h3 class="title-md">Room Info</h3>
-                  <button class="close-btn" onclick="window.closeOverlay()">
-                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M18 6 6 18"/>
-                        <path d="m6 6 12 12"/>
-                     </svg>
-                  </button>
-               </div>
-               <div class="info-header">
-                  <div id="info-avatar" class="info-avatar">?</div>
-                  <div id="info-name" class="info-title">Room Name</div>
-                  <div id="info-type" class="info-subtitle">Group</div>
-               </div>
-               <div class="info-section">
-                  <div class="info-row" id="info-creator-row">
-                     <span class="info-label">Created By</span>
-                     <span id="info-creator" class="info-value">User</span>
-                  </div>
-                  <div class="info-row">
-                     <span class="info-label">Room ID</span>
-                     <div class="flex items-center gap-6">
-                        <span id="info-id" class="info-value mono fs-11 max-w-120">id</span>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-14 h-14 c-accent cursor-pointer flex-shrink-0" onclick="window.copyInfoId()">
-                           <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
-                           <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
-                        </svg>
-                     </div>
-                  </div>
-                  <div class="info-row">
-                     <span class="info-label">Created</span>
-                     <span id="info-date" class="info-value">Date</span>
-                  </div>
-               </div>
-               <div class="info-section presence-section">
-                  <div class="presence-label">Presence</div>
-                  <div class="presence-list">
-                     <div class="presence-item">
-                        <div class="status-legend">
-                           <div class="status-dot bg-success"></div>
-                           <span class="fs-12 fw-600">This Room</span>
-                        </div>
-                        <span id="info-room-count" class="pill-badge">-</span>
-                     </div>
-                     <div class="presence-item">
-                        <div class="status-legend">
-                           <div class="status-dot bg-accent"></div>
-                           <span class="fs-12 fw-600">Global Network</span>
-                        </div>
-                        <span id="info-global-count" class="pill-badge pill-badge-main">0</span>
-                     </div>
-                  </div>
-               </div>
-               <div class="danger-buttons">
-                  <button id="info-delete-btn" class="btn btn-danger" onclick="window.initiateDeleteRoom()">Delete Chat</button>
-               </div>
-            </div>
-            <div id="view-edit-message" class="view-content">
-               <div class="flex justify-between items-center w-full mb-16">
-                  <h3 class="title-md">Edit Message</h3>
-                  <button class="close-btn" onclick="window.closeOverlay()">
-                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M18 6 6 18"/>
-                        <path d="m6 6 12 12"/>
-                     </svg>
-                  </button>
-               </div>
-               <textarea id="edit-msg-input" class="edit-modal-textarea" placeholder="Message..."></textarea>
-               <button class="btn btn-accent" onclick="window.saveEditMessage()">Save</button>
-            </div>
+            <button class="btn bn mt-12" style="color:var(--text-mute)" onclick="window.nav('scr-start')">Cancel</button>
          </div>
-      </div>
-      <div id="block-overlay"></div>
-      <div id="loader-overlay" class="active">
-         <div class="spinner"></div>
-         <span id="loader-text" class="loader-text">Initializing...</span>
-      </div>
-      <div id="toast-container"></div>
-      <div id="context-menu">
-         <button class="ctx-item" id="ctx-edit">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-               <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/>
-               <path d="m15 5 4 4"/>
-            </svg>
-            Edit
-         </button>
-         <button class="ctx-item" id="ctx-copy">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-               <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
-               <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
-            </svg>
-            Copy
-         </button>
-         <button class="ctx-item danger" id="ctx-delete">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-               <path d="M10 11v6"/>
-               <path d="M14 11v6"/>
-               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
-               <path d="M3 6h18"/>
-               <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-            </svg>
-            Delete
-         </button>
-      </div>
-
-      <!-- Screen: Start -->
-      <div id="scr-start" class="screen active center-content">
-         <h1 class="title">HRN Chat</h1>
-         <p class="subtitle">Secure Network</p>
-         <button class="btn btn-accent" onclick="window.nav('scr-login')">Sign In</button>
-         <button class="btn mt-12" onclick="window.nav('scr-register')">Create Account</button>
-      </div>
-
-      <!-- Screen: Login -->
-      <div id="scr-login" class="screen center-content">
-         <h1 class="title">Sign In</h1>
-         <p class="subtitle">Access Secure Room</p>
-         <input id="l-email" class="input-field" type="email" placeholder="Email Address">
-         <input id="l-pass" type="password" class="input-field" placeholder="Password">
-         <button class="btn btn-accent" onclick="window.handleLogin(event)">Access</button>
-         <button class="btn border-none mt-12 btn-back-muted" onclick="window.nav('scr-start')">Back</button>
-      </div>
-
-      <!-- Screen: Register -->
-      <div id="scr-register" class="screen center-content">
-         <div class="step-indicator" id="reg-step-indicator">
-            <div class="step-dot active"></div>
-            <div class="step-dot"></div>
-            <div class="step-dot"></div>
+         <div id="scr-verify" class="screen center-content">
+            <h1 class="title">Verify</h1>
+            <p class="subtitle">Confirm Identity</p>
+            <input id="v-code" class="input-field" style="text-align:center;font-size:22px;letter-spacing:6px" placeholder="000000"><button class="btn btn-accent" onclick="window.handleVerify(event)">Confirm</button>
+            <div id="v-timer" class="mt-24" style="color:var(--accent);font-weight:800;font-size:12px">10:00</div>
          </div>
-         <div class="step-container">
-            <div id="reg-step-1" class="wizard-step active">
-               <h1 class="title">Sign Up</h1>
-               <p class="subtitle">Step 1 of 3</p>
-               <input id="r-email" class="input-field" type="email" placeholder="Email Address">
-               <input id="r-pass" class="input-field" type="password" placeholder="Password (min. 8 chars)">
-               <button class="btn btn-accent" onclick="window.nextRegStep()">Next</button>
-            </div>
-            <div id="reg-step-2" class="wizard-step">
-               <h1 class="title">Profile</h1>
-               <p class="subtitle">Step 2 of 3</p>
-               <input id="r-name" class="input-field" placeholder="Full Name">
-               <div class="action-buttons mt-4">
-                  <button class="btn btn-back" onclick="window.prevRegStep()">Back</button>
-                  <button class="btn btn-accent btn-accent-flex" onclick="window.nextRegStep()">Next</button>
-               </div>
-            </div>
-            <div id="reg-step-3" class="wizard-step">
-               <h1 class="title">Avatar</h1>
-               <p class="subtitle">Step 3 of 3</p>
-               <div class="avatar-carousel-container">
-                  <div class="carousel-wrapper">
-                     <button class="carousel-btn" onclick="window.carouselNav(-1)">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                           <path d="m15 18-6-6 6-6"/>
-                        </svg>
-                     </button>
-                     <div class="carousel-preview" id="avatar-preview-el"></div>
-                     <button class="carousel-btn" onclick="window.carouselNav(1)">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                           <path d="m9 18 6-6-6-6"/>
-                        </svg>
-                     </button>
-                  </div>
-                  <div class="upload-btn-wrapper">
-                     <label class="upload-btn">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                           <path d="M12 3v12"/>
-                           <path d="m17 8-5-5-5 5"/>
-                           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        </svg>
-                        <span>Upload Custom</span>
-                        <input type="file" id="avatar-upload-input" accept="image/*" class="hidden" onchange="window.handleAvatarUpload(event)">
-                     </label>
-                  </div>
-               </div>
-               <input id="r-avatar-url" class="input-field mt-8" placeholder="Or paste Image URL...">
-               <div class="action-buttons mt-4">
-                  <button class="btn btn-back" onclick="window.prevRegStep()">Back</button>
-                  <button class="btn btn-accent btn-accent-flex" onclick="window.handleRegister(event)">Verify</button>
-               </div>
-            </div>
-         </div>
-         <button class="btn border-none mt-12 btn-back-muted" onclick="window.nav('scr-start')">Cancel</button>
-      </div>
-
-      <!-- Screen: Verify -->
-      <div id="scr-verify" class="screen center-content">
-         <h1 class="title">Verify</h1>
-         <p class="subtitle">Confirm Identity</p>
-         <input id="v-code" class="input-field verify-input" placeholder="000000">
-         <button class="btn btn-accent" onclick="window.handleVerify(event)">Confirm</button>
-         <div id="v-timer" class="mt-24">10:00</div>
-      </div>
-
-      <!-- Screen: Account -->
-      <div id="scr-account" class="screen">
-         <div class="header">
-            <span class="clickable" onclick="window.nav('scr-lobby', 'right')">
-               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="m15 18-6-6 6-6"/>
-               </svg>
-            </span>
-            <h1 class="title-lg text-center flex-1">My Account</h1>
-            <div class="header-gap"></div>
-         </div>
-         <div class="center-content account-center">
-            <div id="acc-page-avatar" class="chat-avatar acc-page-avatar">?</div>
-            <h1 id="acc-page-name" class="title acc-page-name">User Name</h1>
-            <p id="acc-page-type" class="subtitle">Account Type</p>
-         </div>
-         <div class="account-info">
-            <div class="acc-info-card">
-               <div class="acc-label">User ID</div>
-               <div id="acc-page-id" class="acc-value acc-page-id" onclick="window.copyAccountId()"></div>
-            </div>
-            <div id="acc-email-wrapper" class="acc-info-card">
-               <div class="acc-label">Email Address</div>
-               <div id="acc-page-email" class="acc-value acc-page-email"></div>
-            </div>
-         </div>
-         <div class="logout-wrapper">
-            <button class="btn logout-btn" onclick="window.handleLogout(event)">Log Out</button>
-         </div>
-      </div>
-
-      <!-- Screen: Lobby -->
-      <div id="scr-lobby" class="screen">
-         <div class="header">
-            <div class="flex items-center gap-8 flex-1 min-w-0">
-               <h1 class="title-lg">HRN Chat</h1>
-               <button class="refresh-btn" onclick="window.refreshLobby()">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                     <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
-                     <path d="M21 3v5h-5"/>
-                     <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
-                     <path d="M8 16H3v5"/>
-                  </svg>
-               </button>
-            </div>
-            <div class="flex gap-12 items-center flex-shrink-0">
-               <div id="lobby-avatar-btn" class="chat-avatar avatar-lg" onclick="window.nav('scr-account')">?</div>
-               <span class="clickable" id="icon-plus-lobby" onclick="window.nav('scr-create')">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                     <path d="M5 12h14"/>
-                     <path d="M12 5v14"/>
-                  </svg>
-               </span>
-            </div>
-         </div>
-         <input id="search-bar" class="input-field" placeholder="Search..." oninput="window.filterRooms()">
-         <div id="room-list" class="flex-1"></div>
-         <div class="lobby-footer">
-            <input id="join-id" class="input-field input-field-no-margin flex-1" placeholder="Direct ID">
-            <button class="btn btn-accent w-80" onclick="window.joinPrivate()">Join</button>
-         </div>
-      </div>
-
-      <!-- Screen: Chat -->
-      <div id="scr-chat" class="screen">
-         <div class="header mb-12">
-            <div class="chat-header-main">
-               <span class="clickable flex-shrink-0" onclick="window.leaveChat()">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+         <div id="scr-account" class="screen">
+            <div class="header">
+               <span class="clickable" onclick="window.nav('scr-lobby', 'right')">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-left">
                      <path d="m15 18-6-6 6-6"/>
                   </svg>
                </span>
-               <div class="chat-avatar status-border" id="chat-avatar-display">?</div>
-               <div class="chat-header-title-wrapper">
-                  <h2 id="chat-title" class="title">---</h2>
-                  <div id="chat-subtitle-area" class="chat-header-subtitle">
-                     <span class="online-dot"></span>
-                     <span id="room-user-count">-</span>
-                  </div>
+               <h1 class="title" style="font-size:18px;margin:0;flex:1;text-align:center">My Account</h1>
+               <div style="width:22px"></div>
+            </div>
+            <div class="center-content" style="padding-top: 20px; margin-bottom: 30px">
+               <div id="acc-page-avatar" class="chat-avatar" style="width:90px;height:90px;font-size:36px; margin:0 auto 12px auto"></div>
+               <h1 id="acc-page-name" class="title" style="font-size:22px">User Name</h1>
+               <p id="acc-page-type" class="subtitle">Account Type</p>
+            </div>
+            <div style="padding: 0 10px">
+               <div class="acc-info-card">
+                  <div class="acc-label">User ID</div>
+                  <div id="acc-page-id" class="acc-value" style="cursor:pointer;color:var(--accent);font-family:monospace;font-size:12px" onclick="window.copyAccountId()"></div>
+               </div>
+               <div id="acc-email-wrapper" class="acc-info-card">
+                  <div class="acc-label">Email Address</div>
+                  <div id="acc-page-email" class="acc-value" style="font-size:12px"></div>
                </div>
             </div>
-            <div class="flex gap-12 items-center flex-shrink-0">
-               <span id="info-edit-btn" class="icon-wrapper hidden" onclick="window.openRoomSettings()">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                     <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/>
-                     <circle cx="12" cy="12" r="3"/>
+            <div style="padding: 20px; margin-top:auto"><button class="btn" style="background:transparent;border:1px dotted var(--accent);color:var(--accent)" onclick="window.handleLogout(event)">Log Out</button></div>
+         </div>
+         <div id="scr-lobby" class="screen">
+            <div class="header">
+               <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+                  <h1 class="title" style="font-size:18px;margin:0">HRN Chat</h1>
+                  <button class="refresh-btn" onclick="window.refreshLobby()">
+                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw">
+                        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                        <path d="M21 3v5h-5"/>
+                        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                        <path d="M8 16H3v5"/>
+                     </svg>
+                  </button>
+               </div>
+               <div style="display:flex;gap:12px;align-items:center;flex-shrink:0">
+                  <div id="lobby-avatar-btn" class="chat-avatar" style="width:32px;height:32px;cursor:pointer" onclick="window.nav('scr-account')">?</div>
+                  <span class="clickable" id="icon-plus-lobby" onclick="window.nav('scr-create')">
+                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plus">
+                        <path d="M5 12h14"/>
+                        <path d="M12 5v14"/>
+                     </svg>
+                  </span>
+               </div>
+            </div>
+            <input id="search-bar" class="input-field" placeholder="Search..." oninput="window.filterRooms()">
+            <div id="room-list" class="flex-1" style="overflow-y:auto"></div>
+            <div style="display:flex;gap:10px;padding-top:12px;border-top:1px solid var(--border)"><input id="join-id" class="input-field m-0-flex-1" placeholder="Direct ID"><button class="btn btn-accent w-80" onclick="window.joinPrivate()">Join</button></div>
+         </div>
+         <div id="scr-chat" class="screen">
+            <div class="header" style="margin-bottom:12px">
+               <div class="chat-header-main">
+                  <span class="clickable flex-s0" onclick="window.leaveChat()">
+                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-left">
+                        <path d="m15 18-6-6 6-6"/>
+                     </svg>
+                  </span>
+                  <div class="chat-avatar status-border" id="chat-avatar-display">?</div>
+                  <div class="chat-header-title-wrapper">
+                     <h2 id="chat-title" class="title">---</h2>
+                     <div id="chat-subtitle-area" class="chat-header-subtitle"><span class="online-dot"></span><span id="room-user-count">-</span></div>
+                  </div>
+               </div>
+               <div style="display:flex;gap:12px;align-items:center;flex-shrink:0">
+                  <span id="info-edit-btn" class="icon-wrapper" style="display:none" onclick="window.openRoomSettings()">
+                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings">
+                        <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/>
+                        <circle cx="12" cy="12" r="3"/>
+                     </svg>
+                  </span>
+                  <span class="icon-wrapper" onclick="window.openRoomInfo()">
+                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-info">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M12 16v-4"/>
+                        <path d="M12 8h.01"/>
+                     </svg>
+                  </span>
+               </div>
+            </div>
+            <div id="chat-messages"></div>
+            <div id="chat-input-area">
+               <textarea id="chat-input" class="input-field" placeholder="Message..." style="height:50px;resize:none;min-height:50px"></textarea>
+               <button id="send-btn" class="btn btn-accent" onclick="window.sendMsg(event)">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-up">
+                     <path d="m5 12 7-7 7 7"/>
+                     <path d="M12 19V5"/>
                   </svg>
-               </span>
-               <span class="icon-wrapper" onclick="window.openRoomInfo()">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                     <circle cx="12" cy="12" r="10"/>
-                     <path d="M12 16v-4"/>
-                     <path d="M12 8h.01"/>
-                  </svg>
-               </span>
+               </button>
             </div>
          </div>
-         <div id="chat-messages"></div>
-         <div id="chat-input-area">
-            <textarea id="chat-input" class="input-field h-50 resize-none min-h-50" placeholder="Message..."></textarea>
-            <button id="send-btn" class="btn btn-accent" onclick="window.sendMsg(event)">
-               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="m5 12 7-7 7 7"/>
-                  <path d="M12 19V5"/>
-               </svg>
-            </button>
-         </div>
-      </div>
-
-      <!-- Screen: Create -->
-      <div id="scr-create" class="screen center-content">
-         <div class="step-indicator" id="create-step-indicator">
-            <div class="step-dot active"></div>
-            <div class="step-dot"></div>
-         </div>
-         <div class="step-container">
-            <div id="create-step-1" class="wizard-step active">
-               <h1 class="title">New Chat</h1>
-               <p class="subtitle">Choose Type</p>
-               <div id="type-group" class="type-card" onclick="window.selectCreateType('group')">
-                  <div class="type-icon">
-                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
-                        <path d="M16 3.128a4 4 0 0 1 0 7.744"/>
-                        <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
-                        <circle cx="9" cy="7" r="4"/>
+         <div id="scr-create" class="screen center-content">
+            <div class="step-indicator" id="create-step-indicator">
+               <div class="step-dot active"></div>
+               <div class="step-dot"></div>
+            </div>
+            <div class="step-container">
+               <div id="create-step-1" class="wizard-step active">
+                  <h1 class="title">New Chat</h1>
+                  <p class="subtitle">Choose Type</p>
+                  <div id="type-group" class="type-card" onclick="window.selectCreateType('group')">
+                     <div class="type-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-users">
+                           <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                           <path d="M16 3.128a4 4 0 0 1 0 7.744"/>
+                           <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+                           <circle cx="9" cy="7" r="4"/>
+                        </svg>
+                     </div>
+                     <div class="type-info">
+                        <h4>Group Chat</h4>
+                        <p>Multiple people</p>
+                     </div>
+                  </div>
+                  <div id="type-direct" class="type-card" onclick="window.selectCreateType('direct')">
+                     <div class="type-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-user">
+                           <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+                           <circle cx="12" cy="7" r="4"/>
+                        </svg>
+                     </div>
+                     <div class="type-info">
+                        <h4>Private Chat</h4>
+                        <p>Direct message</p>
+                     </div>
+                  </div>
+                  <button class="btn btn-accent" onclick="window.nextCreateStep()">Next</button>
+               </div>
+               <div id="create-step-2" class="wizard-step">
+                  <h1 class="title" id="create-step2-title">Setup</h1>
+                  <p class="subtitle" id="create-step2-sub">Details</p>
+                  <div id="create-group-fields">
+                     <input id="c-name" class="input-field" placeholder="Group Name"><input id="c-avatar" class="input-field" placeholder="Avatar URL (optional)"><input id="c-pass" type="password" class="input-field" placeholder="Password (optional)">
+                     <div class="flex-sb-aic-w100-p18-bg-br12-mb20"><span style="font-weight:600;font-size:13px">Visible in Lobby</span><label class="switch"><input type="checkbox" id="c-visible" checked><span class="slider"></span></label></div>
+                  </div>
+                  <div id="create-direct-fields" class="dn"><input id="c-target-user" class="input-field" placeholder="Paste User ID..."></div>
+                  <div id="create-access-summary" class="access-summary-card" onclick="window.openAccessManager('create')">
+                     <span class="c-main">Public Room</span>
+                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-right">
+                        <path d="m9 18 6-6-6-6"/>
                      </svg>
                   </div>
-                  <div class="type-info">
-                     <h4>Group Chat</h4>
-                     <p>Multiple people</p>
-                  </div>
-               </div>
-               <div id="type-direct" class="type-card" onclick="window.selectCreateType('direct')">
-                  <div class="type-icon">
-                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
-                        <circle cx="12" cy="7" r="4"/>
-                     </svg>
-                  </div>
-                  <div class="type-info">
-                     <h4>Private Chat</h4>
-                     <p>Direct message</p>
-                  </div>
-               </div>
-               <button class="btn btn-accent" onclick="window.nextCreateStep()">Next</button>
-            </div>
-            <div id="create-step-2" class="wizard-step">
-               <h1 class="title" id="create-step2-title">Setup</h1>
-               <p class="subtitle" id="create-step2-sub">Details</p>
-               <div id="create-group-fields">
-                  <input id="c-name" class="input-field" placeholder="Group Name">
-                  <input id="c-avatar" class="input-field" placeholder="Avatar URL (optional)">
-                  <input id="c-pass" type="password" class="input-field" placeholder="Password (optional)">
-                  <div class="toggle-row">
-                     <span class="toggle-row-label">Visible in Lobby</span>
-                     <label class="switch">
-                        <input type="checkbox" id="c-visible" checked>
-                        <span class="slider"></span>
-                     </label>
-                  </div>
-               </div>
-               <div id="create-direct-fields" class="hidden">
-                  <input id="c-target-user" class="input-field" placeholder="Paste User ID...">
-               </div>
-               <div id="create-access-summary" class="access-summary-card" onclick="window.openAccessManager('create')">
-                  <span class="c-main">Public Room</span>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                     <path d="m9 18 6-6-6-6"/>
-                  </svg>
-               </div>
-               <div class="action-buttons">
-                  <button class="btn btn-back" onclick="window.prevCreateStep()">Back</button>
-                  <button class="btn btn-accent btn-accent-flex" onclick="window.handleCreate(event)">Create</button>
+                  <div style="display:flex;gap:8px"><button class="btn" style="background:#f2f2f7;flex:1" onclick="window.prevCreateStep()">Back</button><button class="btn btn-accent" style="flex:1" onclick="window.handleCreate(event)">Create</button></div>
                </div>
             </div>
+            <button class="btn bn mt-12" style="color:var(--text-mute)" onclick="window.nav('scr-lobby')">Cancel</button>
          </div>
-         <button class="btn border-none mt-12 btn-back-muted" onclick="window.nav('scr-lobby')">Cancel</button>
+         <div id="scr-gate" class="screen center-content">
+            <h1 class="title">Encrypted</h1>
+            <p class="subtitle">Authentication Required</p>
+            <input id="gate-pass" type="password" class="input-field" style="text-align:center" placeholder="Passkey"><button class="btn btn-accent" onclick="window.submitGate(event)">Decrypt</button><button class="btn bn mt-12" style="color:var(--text-mute)" onclick="window.nav('scr-lobby')">Abort</button>
+         </div>
+         <div id="scr-success" class="screen center-content">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-circle-check mb-24">
+               <circle cx="12" cy="12" r="10"/>
+               <path d="m9 12 2 2 4-4"/>
+            </svg>
+            <h1 class="title">Room Created</h1>
+            <p class="subtitle">Deployment Successful</p>
+            <div id="s-id" class="input-field" style="text-align:center;color:var(--accent);font-weight:800;border:1px dashed var(--accent)" onclick="window.copySId()">---</div>
+            <button class="btn btn-accent" onclick="window.enterCreated()">Enter</button>
+         </div>
       </div>
-
-      <!-- Screen: Gate -->
-      <div id="scr-gate" class="screen center-content">
-         <h1 class="title">Encrypted</h1>
-         <p class="subtitle">Authentication Required</p>
-         <input id="gate-pass" type="password" class="input-field gate-input" placeholder="Passkey">
-         <button class="btn btn-accent" onclick="window.submitGate(event)">Decrypt</button>
-         <button class="btn border-none mt-12 btn-back-muted" onclick="window.nav('scr-lobby')">Abort</button>
-      </div>
-
-      <!-- Screen: Success -->
-      <div id="scr-success" class="screen center-content">
-         <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mb-24">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="m9 12 2 2 4-4"/>
-         </svg>
-         <h1 class="title">Room Created</h1>
-         <p class="subtitle">Deployment Successful</p>
-         <div id="s-id" class="input-field success-id" onclick="window.copySId()">---</div>
-         <button class="btn btn-accent" onclick="window.enterCreated()">Enter</button>
-      </div>
-   </div>
-   <script type="module">
-      import { initHRNchat } from './assets/logic.js';
-      initHRNchat({ maxUsers: 150, maxMessageLength: 5000, maxMessages: 50, rateLimitMs: 1000, historyLoadLimit: 20, backgroundDisconnectMs: 1000 });
-      if("serviceWorker"in navigator){window.addEventListener("load",async()=>{try{await navigator.serviceWorker.register("./service-worker.js")}catch(e){}})}      
-   </script>
-</body>
+      <script type=module>
+         import { initHRNchat } from './assets/logic.js';
+         initHRNchat({ maxUsers: 150, maxMessageLength: 5000, maxMessages: 50, rateLimitMs: 1000, historyLoadLimit: 20, backgroundDisconnectMs: 1000 });
+         if("serviceWorker"in navigator){window.addEventListener("load",async()=>{try{await navigator.serviceWorker.register("./service-worker.js")}catch(e){}})}      
+      </script>
+   </body>
 </html>
