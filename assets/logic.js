@@ -36,7 +36,7 @@ export function initHRNchat(customConfig = {}) {
         sessionStartTime: null,
         isPresenceSubscribed: false,
         lastReconnectAttempt: 0,
-        pending: null, // Now stores the full room object
+        pending: null,
         lastCreated: null,
         lastCreatedPass: null,
         processingAction: false,
@@ -452,12 +452,10 @@ export function initHRNchat(customConfig = {}) {
         return { name: profile.full_name || 'User', avatar: avatar };
     };
 
-    // Helper to update Gate UI before entering password
     const updateGateUI = async (room) => {
         if (!room) return;
         const display = await resolveRoomDisplay(room);
         
-        // Update Gate screen elements (assuming IDs: gate-room-name, gate-room-avatar)
         const nameEl = $('gate-room-name');
         const avatarEl = $('gate-room-avatar');
         
@@ -571,11 +569,7 @@ export function initHRNchat(customConfig = {}) {
     const handleServerFull = async () => {
         if (state.isCapacityBlocked) return;
         state.isCapacityBlocked = true;
-        await cleanupChannels(false);
-        if (state.globalPresenceChannel) {
-            state.globalPresenceChannel.unsubscribe();
-            state.globalPresenceChannel = null;
-        }
+        await fullDisconnect(); // Use full disconnect
         const overlay = $('block-overlay');
         if (overlay) {
             overlay.innerHTML = `
@@ -592,20 +586,31 @@ export function initHRNchat(customConfig = {}) {
         state.connectionTimeoutTimer = null;
         if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
         state.reconnectTimer = null;
+        
         if (state.presenceChannel) {
-            state.presenceChannel.unsubscribe();
+            try { await state.presenceChannel.unsubscribe(); } catch (e) { console.warn("Presence unsub error", e); }
             state.presenceChannel = null;
             state.isPresenceSubscribed = false;
         }
         if (state.chatChannel) {
-            state.chatChannel.unsubscribe();
+            try { await state.chatChannel.unsubscribe(); } catch (e) { console.warn("Chat unsub error", e); }
             state.chatChannel = null;
         }
         if (!keepGlobal && state.globalPresenceChannel) {
-            state.globalPresenceChannel.unsubscribe();
+            try { await state.globalPresenceChannel.unsubscribe(); } catch (e) { console.warn("Global unsub error", e); }
             state.globalPresenceChannel = null;
+            state.globalPresenceReady = false;
         }
         state.isChatChannelReady = false;
+    };
+
+    const fullDisconnect = async () => {
+        await cleanupChannels(false);
+        try {
+            if (db.realtime && typeof db.realtime.disconnect === 'function') {
+                db.realtime.disconnect();
+            }
+        } catch (e) { console.warn("Realtime disconnect error", e); }
     };
 
     const queryOnlineCountImmediately = async () => {
@@ -626,7 +631,10 @@ export function initHRNchat(customConfig = {}) {
 
     const setupGlobalPresence = async (userId) => {
         if (state.isOfflineMode || state.isCapacityBlocked) return;
-        if (state.globalPresenceChannel) state.globalPresenceChannel.unsubscribe();
+        if (state.globalPresenceChannel) {
+            try { await state.globalPresenceChannel.unsubscribe(); } catch(e) {}
+            state.globalPresenceChannel = null;
+        }
         state.globalPresenceChannel = db.channel('global-presence', { config: { presence: { key: userId || `listener_${Date.now()}` } } });
         state.globalPresenceChannel.on('presence', { event: 'sync' }, async () => {
             const presState = state.globalPresenceChannel.presenceState();
@@ -758,9 +766,10 @@ export function initHRNchat(customConfig = {}) {
         }
     };
 
-    window.stayOffline = () => {
+    window.stayOffline = async () => {
         const overlay = $('block-overlay');
         if (overlay) overlay.classList.remove('active');
+        await fullDisconnect(); // Ensure WS is closed
         setAppMode(true);
         window.toast("Offline mode active.");
         if (state.user) window.loadRooms();
@@ -903,9 +912,8 @@ export function initHRNchat(customConfig = {}) {
                 if (state.backgroundDisconnectTimer) clearTimeout(state.backgroundDisconnectTimer);
                 state.backgroundDisconnectTimer = setTimeout(async () => {
                     if (!state.isOfflineMode && !state.isCapacityBlocked) {
-                        await cleanupChannels(false);
+                        await fullDisconnect(); // Use full disconnect
                         state.isBackgroundDisconnectActive = true;
-                        try { if (db.realtime && typeof db.realtime.disconnect === 'function') db.realtime.disconnect(); } catch (e) {}
                     }
                 }, CONFIG.backgroundDisconnectMs);
             } else if (document.visibilityState === 'visible') {
@@ -929,9 +937,8 @@ export function initHRNchat(customConfig = {}) {
             }
         });
         
-        window.addEventListener('beforeunload', () => {
-            if (state.presenceChannel && state.user) state.presenceChannel.unsubscribe();
-            if (state.globalPresenceChannel && state.user) state.globalPresenceChannel.unsubscribe();
+        window.addEventListener('beforeunload', async () => {
+            await fullDisconnect();
         });
     };
 
@@ -1527,7 +1534,10 @@ export function initHRNchat(customConfig = {}) {
         if (state.isCapacityBlocked) return;
         window.setLoading(true, "Opening chat...");
         state.currentRoomPassword = rawPassword;
-        if (state.chatChannel) state.chatChannel.unsubscribe();
+        
+        // Strict cleanup of previous room channels before starting new ones
+        await cleanupChannels(true); 
+
         state.currentRoomId = id;
         state.lastRenderedDateLabel = null;
         state.oldestMessageTimestamp = null;
@@ -1648,11 +1658,7 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(true, "Leaving...");
         state.currentRoomId = null;
         state.currentRoomData = null;
-        if (state.chatChannel) state.chatChannel.unsubscribe();
-        state.chatChannel = null;
-        if (state.presenceChannel) state.presenceChannel.unsubscribe();
-        state.presenceChannel = null;
-        state.isPresenceSubscribed = false;
+        await cleanupChannels(true); // Clean room channels, keep global
         setConnectionVisuals('offline');
         if ($('info-edit-btn')) $('info-edit-btn').style.display = 'none';
         window.nav('scr-lobby');
@@ -1827,7 +1833,6 @@ export function initHRNchat(customConfig = {}) {
     window.submitGate = async (e) => {
         if (!e || !e.isTrusted) return;
         const inputPass = $('gate-pass').value;
-        // state.pending is now the full room object
         if (state.isOfflineMode) { window.openVault(state.pending.id, state.pending.name, inputPass, state.pending.salt, state.pending); return; }
         const inputHash = await sha256(inputPass + state.pending.salt);
         window.setLoading(true, "Verifying...");
@@ -1842,7 +1847,7 @@ export function initHRNchat(customConfig = {}) {
         window.setLoading(true, "Leaving...");
         state.currentRoomId = null;
         state.user = null;
-        await cleanupChannels();
+        await fullDisconnect(); // Close WS completely
         localStorage.removeItem('hrn_auth_email');
         localStorage.removeItem('hrn_auth_pass');
         setAppMode(false);
@@ -1864,9 +1869,7 @@ export function initHRNchat(customConfig = {}) {
         const createBtn = $('icon-plus-lobby');
         if (createBtn) createBtn.style.display = 'flex';
         if (ev === 'SIGNED_OUT') {
-            if (state.presenceChannel) state.presenceChannel.unsubscribe();
-            if (state.chatChannel) state.chatChannel.unsubscribe();
-            if (state.globalPresenceChannel) state.globalPresenceChannel.unsubscribe();
+            await fullDisconnect();
             window.nav('scr-start');
         }
     });
@@ -1968,7 +1971,7 @@ export function initHRNchat(customConfig = {}) {
         const openLocal = async () => {
             const meta = await localDB.get('rooms', id);
             if (meta && meta.id) {
-                state.pending = meta; // Store full object
+                state.pending = meta;
                 if (meta.has_password) {
                     updateGateUI(meta);
                     window.nav('scr-gate');
@@ -1986,7 +1989,7 @@ export function initHRNchat(customConfig = {}) {
             if (error) throw error;
             window.setLoading(false);
             if (data && data.id) await localDB.put('rooms', data);
-            state.pending = data; // Store full object
+            state.pending = data;
             if (data.has_password) {
                 updateGateUI(data);
                 window.nav('scr-gate');
@@ -2018,7 +2021,7 @@ export function initHRNchat(customConfig = {}) {
             window.setLoading(false);
             if (data) {
                 await localDB.put('rooms', data);
-                state.pending = data; // Store full object
+                state.pending = data;
                 if (data.has_password) {
                     updateGateUI(data);
                     window.nav('scr-gate');
