@@ -457,20 +457,22 @@ export function initHRNchat(customConfig = {}) {
         if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
         state.reconnectTimer = null;
         
-        if (state.presenceChannel) { try { await state.presenceChannel.unsubscribe(); } catch (e) {} state.presenceChannel = null; state.isPresenceSubscribed = false; }
-        if (state.chatChannel) { try { await state.chatChannel.unsubscribe(); } catch (e) {} state.chatChannel = null; }
-        if (!keepGlobal && state.globalPresenceChannel) { try { await state.globalPresenceChannel.unsubscribe(); } catch (e) {} state.globalPresenceChannel = null; state.globalPresenceReady = false; }
+        // Fire and forget unsubscriptions to avoid hanging on offline
+        if (state.presenceChannel) { try { state.presenceChannel.unsubscribe(); } catch (e) {} state.presenceChannel = null; state.isPresenceSubscribed = false; }
+        if (state.chatChannel) { try { state.chatChannel.unsubscribe(); } catch (e) {} state.chatChannel = null; }
+        if (!keepGlobal && state.globalPresenceChannel) { try { state.globalPresenceChannel.unsubscribe(); } catch (e) {} state.globalPresenceChannel = null; state.globalPresenceReady = false; }
         state.isChatChannelReady = false;
     };
 
     const fullDisconnect = async () => {
         await cleanupChannels(false);
-        try { if (db.realtime && typeof db.realtime.disconnect === 'function') db.realtime.disconnect(); } catch (e) {}
+        // Do NOT call db.realtime.disconnect() here. Let the browser handle socket close or use connect() to revive.
     };
 
     const queryOnlineCountImmediately = async () => {
         if (!state.presenceChannel) return;
         const presState = state.presenceChannel.presenceState();
+        // FIX: Deduplicate by user_id to prevent ghost users
         const uniqueUserIds = new Set(Object.values(presState).flat().map(p => p.user_id));
         state.lastKnownOnlineCount = uniqueUserIds.size;
         schedulePresenceUpdate();
@@ -483,22 +485,24 @@ export function initHRNchat(customConfig = {}) {
 
     const setupGlobalPresence = async (userId) => {
         if (state.isOfflineMode || state.isCapacityBlocked) return;
-        if (state.globalPresenceChannel) { try { await state.globalPresenceChannel.unsubscribe(); } catch(e) {} state.globalPresenceChannel = null; }
+        if (state.globalPresenceChannel) { try { state.globalPresenceChannel.unsubscribe(); } catch(e) {} state.globalPresenceChannel = null; }
         
         state.globalPresenceChannel = db.channel('global-presence', { config: { presence: { key: userId || `listener_${Date.now()}` } } });
         state.globalPresenceChannel.on('presence', { event: 'sync' }, async () => {
             if (!state.globalPresenceChannel) return;
             const presState = state.globalPresenceChannel.presenceState();
-            const users = [];
-            Object.keys(presState).forEach(key => { presState[key].forEach(pres => { users.push(pres); }); });
-            users.sort((a, b) => new Date(a.online_at) - new Date(b.online_at));
-            state.globalOnlineCount = users.length;
+            
+            // FIX: Deduplicate user IDs to fix Ghost User count
+            const uniqueUserIds = new Set();
+            Object.values(presState).flat().forEach(p => uniqueUserIds.add(p.user_id));
+            state.globalOnlineCount = uniqueUserIds.size;
+            
             state.globalPresenceReady = true;
             schedulePresenceUpdate();
+            
             if (state.user && !state.isOfflineMode && !state.isCapacityBlocked) {
-                if (users.length > CONFIG.maxUsers) {
-                    const myIndex = users.findIndex(u => u.user_id === state.user.id);
-                    if (myIndex === -1 || myIndex >= CONFIG.maxUsers) handleServerFull();
+                if (state.globalOnlineCount > CONFIG.maxUsers) {
+                    if (!uniqueUserIds.has(state.user.id)) handleServerFull(); // If I am not in the set, I am the +1 overflow
                 }
             }
         }).subscribe(async (status) => {
@@ -548,6 +552,9 @@ export function initHRNchat(customConfig = {}) {
             attemptHardReconnect();
         }, timeout);
         
+        // Ensure socket is connected before subscribing
+        try { if (db.realtime && typeof db.realtime.connect === 'function') db.realtime.connect(); } catch (e) {}
+        
         initRoomPresence(state.currentRoomId);
         setupChatChannel(state.currentRoomId);
     };
@@ -572,13 +579,15 @@ export function initHRNchat(customConfig = {}) {
         stopInternetCheck(); state.isCapacityBlocked = false;
         const overlay = $('block-overlay'); if (overlay) overlay.classList.remove('active');
         
+        // FIX: Explicitly connect the socket if it was disconnected
+        try { if (db.realtime && typeof db.realtime.connect === 'function') db.realtime.connect(); } catch (e) {}
+
         if (state.user) {
             const storedEmail = localStorage.getItem('hrn_auth_email'); const storedPass = localStorage.getItem('hrn_auth_pass');
             if (storedEmail && storedPass) {
                 const success = await attemptLogin(storedEmail, storedPass);
                 if (success) { 
                     setAppMode(false); 
-                    if (db.realtime && typeof db.realtime.connect === 'function') db.realtime.connect();
                     setupGlobalPresence(state.user.id); 
                     if (state.currentRoomId) attemptHardReconnect(); 
                     window.loadRooms(); 
@@ -597,7 +606,6 @@ export function initHRNchat(customConfig = {}) {
             const success = await attemptLogin(storedEmail, storedPass);
             if (success) { 
                 setAppMode(false); 
-                if (db.realtime && typeof db.realtime.connect === 'function') db.realtime.connect();
                 setupGlobalPresence(state.user.id); 
                 window.nav('scr-lobby'); 
                 window.loadRooms(); 
@@ -706,18 +714,23 @@ export function initHRNchat(customConfig = {}) {
             if (state.isOfflineMode) window.goOnline(); 
             else { 
                 setConnectionVisuals('connecting'); 
+                // FIX: Force reconnect socket on online event
+                try { if (db.realtime && typeof db.realtime.connect === 'function') db.realtime.connect(); } catch (e) {}
                 if (state.currentRoomId) attemptHardReconnect(); 
                 else setConnectionVisuals('connected'); 
             } 
         };
         const offlineHandler = async () => {
             setAppMode(true);
+            // FIX: Instant disconnect visuals and stop timers. Don't wait for network ops.
             if (state.connectionTimeoutTimer) clearTimeout(state.connectionTimeoutTimer);
             if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
             state.isHardReconnecting = false;
             state.isConnecting = false;
             state.globalPresenceReady = false;
-            try { await fullDisconnect(); } catch(e) {}
+            // Don't need to call disconnect explicitly, the browser handles the socket drop. 
+            // Just cleanup local state.
+            cleanupChannels(false); 
             startInternetCheck();
         };
         window.addEventListener('online', onlineHandler);
