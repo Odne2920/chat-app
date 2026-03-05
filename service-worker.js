@@ -1,5 +1,5 @@
-const CACHE_NAME = 'hrn-cache-1.0.5-2';
-const RUNTIME_CACHE = 'hrn-runtime-cache-1.0.5-2';
+const CACHE_NAME = 'hrn-cache-1.0.5-3';
+const RUNTIME_CACHE = 'hrn-runtime-cache-1.0.5-3';
 
 const SHELL_ASSETS = [
   './',
