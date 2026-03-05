@@ -580,14 +580,14 @@ export function initHRNchat(customConfig = {}) {
                 const success = await attemptLogin(storedEmail, storedPass);
                 if (success) { 
                     setAppMode(false); 
-                    setupGlobalPresence(state.user.id); 
+                    setupGlobalPresence(state.user.id);
+                    state.isConnecting = false; 
                     if (state.currentRoomId) attemptHardReconnect(); 
                     window.loadRooms(); 
                     window.toast("Connected."); 
                 }
-                else { setAppMode(true); }
-            } else { setAppMode(true); }
-            state.isConnecting = false;
+                else { setAppMode(true); state.isConnecting = false; } 
+            } else { setAppMode(true); state.isConnecting = false; } 
             return;
         }
         const activeScreen = document.querySelector('.screen.active');
@@ -599,14 +599,14 @@ export function initHRNchat(customConfig = {}) {
             if (success) { 
                 setAppMode(false); 
                 setupGlobalPresence(state.user.id); 
+                state.isConnecting = false;
                 window.nav('scr-lobby'); 
                 window.loadRooms(); 
                 window.toast("Connected."); 
             }
-            else { window.toast("Connection failed."); }
+            else { window.toast("Connection failed."); state.isConnecting = false; }
             if (isAuthScreen) window.setLoading(false);
-        } else { if (isAuthScreen) window.setLoading(false); else { window.toast("No saved login found."); setAppMode(true); } }
-        state.isConnecting = false;
+        } else { if (isAuthScreen) window.setLoading(false); else { window.toast("No saved login found."); setAppMode(true); } state.isConnecting = false; }
     };
 
     window.stayOffline = async () => { const overlay = $('block-overlay'); if (overlay) overlay.classList.remove('active'); await fullDisconnect(); setAppMode(true); window.toast("Offline mode active."); if (state.user) window.loadRooms(); };
