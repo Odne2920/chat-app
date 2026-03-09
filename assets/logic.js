@@ -32,7 +32,7 @@ export function initHRNchat(customConfig = {}) {
         db: null,
         init() {
             return new Promise((res, rej) => {
-                const r = indexedDB.open('HRN_LOCAL_DB_7', 1);
+                const r = indexedDB.open('HRN_LOCAL_DB_8', 1);
                 r.onerror = () => rej(r.error);
                 r.onsuccess = () => { this.db = r.result; res(); };
                 r.onupgradeneeded = e => {
