@@ -110,10 +110,10 @@ export function initHRNchat(customConfig = {}) {
     const processToast = () => {
         if (Tv || !Tq.length) return;
         const msg = Tq[0], now = Date.now();
-        if (msg === Tt && (now - Ttime < 3000)) { Tq.shift(); return processToast(); }
+        if (msg === Tt && (now - Ttime < 3000)) { Tq.shift(); if (Tq.length > 0) processToast(); return; }
         Tv = true; const cMsg = Tq.shift(); Tt = cMsg; Ttime = now;
         const c = $('toast-container'), t = document.createElement('div'); t.className = 'toast-item'; t.innerText = cMsg;
-        t.onclick = () => { t.style.opacity = '0'; setTimeout(() => { t.remove(); Tv = false; processToast(); }, 400); };
+        t.onclick = () => { if(Date.now() - Ttime < 300) return; t.style.opacity = '0'; setTimeout(() => { t.remove(); Tv = false; processToast(); }, 400); };
         c.appendChild(t);
         setTimeout(() => { if (t.parentNode) { t.style.opacity = '0'; setTimeout(() => { t.remove(); Tv = false; processToast(); }, 400); } }, 3000);
     };
@@ -144,8 +144,23 @@ export function initHRNchat(customConfig = {}) {
     const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
     const cryptW = new Worker(URL.createObjectURL(workerBlob));
     const pendingR = {};
-    cryptW.onmessage = e => { const { id, type, result, error, results, success } = e.data; const k = id || type; if (pendingR[k]) { error ? pendingR[k].reject(error) : pendingR[k].resolve({ type, result, results, success }); delete pendingR[k]; } };
-    const wExec = (type, payload) => new Promise((res, rej) => { const id = crypto.randomUUID(); pendingR[id] = { res, rej }; cryptW.postMessage({ id, type, payload }); });
+    
+    cryptW.onmessage = e => {
+        const { id, type, result, error, results, success } = e.data;
+        const k = id || type;
+        if (pendingR[k]) {
+            if (error) pendingR[k].reject(error);
+            else pendingR[k].resolve({ type, result, results, success });
+            delete pendingR[k];
+        }
+    };
+    
+    const wExec = (type, payload) => new Promise((resolve, reject) => {
+        const id = crypto.randomUUID();
+        pendingR[id] = { resolve, reject };
+        cryptW.postMessage({ id, type, payload });
+    });
+    
     const genSalt = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
     const sha256 = async t => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))).map(b => b.toString(16).padStart(2, '0')).join('');
     const deriveKey = (pass, salt, keyId) => wExec('deriveKey', { password: pass, salt: salt, keyId: keyId });
